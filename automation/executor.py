@@ -9,7 +9,7 @@ from core.interfaces import IEventBus
 from core.models import (
     EventModel, ToolRequestModel, ToolResultModel, 
     ExecutionPlanModel, PlanStepModel, ExecutionContextModel,
-    ToolStartedEventData, ToolFinishedEventData
+    ToolStartedEventData, ToolFinishedEventData, ActionItemModel
 )
 from observability.logger import logger
 
@@ -72,6 +72,10 @@ class PlanExecutor:
         tool_res: Optional[ToolResultModel] = None
         attempts = 0
         while attempts <= tool_req.max_retries:
+            if attempts > 0:
+                backoff_delay = 0.2 * (2 ** (attempts - 1))
+                logger.info(f"[PlanExecutor] Retrying step {step.step_id} (Attempt {attempts + 1}/{tool_req.max_retries + 1}) after {backoff_delay:.2f}s backoff...")
+                await asyncio.sleep(backoff_delay)
             attempts += 1
             try:
                 tool_res = await asyncio.wait_for(tool.execute(tool_req), timeout=tool_req.timeout_sec)

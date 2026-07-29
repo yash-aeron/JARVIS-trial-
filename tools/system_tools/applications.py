@@ -21,6 +21,7 @@ Win32 primitives used:
 import os
 import sys
 import time
+import asyncio
 import ctypes
 import ctypes.wintypes
 import subprocess
@@ -301,7 +302,7 @@ class ApplicationLauncherTool(ITool):
 
         app_lower = app_name.lower().strip()
         try:
-            obs = self._dispatch(action, app_lower, app_name, title_hint, reuse)
+            obs = await asyncio.to_thread(self._dispatch, action, app_lower, app_name, title_hint, reuse)
         except Exception as exc:
             logger.error(f"[AppLauncher] Error: {exc}")
             return ToolResultModel(
@@ -474,7 +475,7 @@ class ApplicationLauncherTool(ITool):
 
         # Undo launch = close; undo close = nothing (can't un-close safely)
         if action in ("launch", "open", "reuse"):
-            obs = self._action_close(app_name.lower(), app_name, graceful=True)
+            obs = await asyncio.to_thread(self._action_close, app_name.lower(), app_name, graceful=True)
         else:
             obs = AppObservation(app_name=app_name, action_taken="noop")
 

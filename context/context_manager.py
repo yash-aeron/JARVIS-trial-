@@ -190,6 +190,54 @@ def _query_clipboard() -> str:
         return ""
 
 
+def _write_clipboard_unicode(text: str) -> bool:
+    """Helper function to write Unicode text back to Win32 clipboard."""
+    if not _is_win32() or text is None:
+        return False
+    try:
+        user32   = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        user32.OpenClipboard.argtypes = [ctypes.wintypes.HWND]
+        user32.OpenClipboard.restype = ctypes.wintypes.BOOL
+        user32.EmptyClipboard.restype = ctypes.wintypes.BOOL
+        user32.SetClipboardData.argtypes = [ctypes.wintypes.UINT, ctypes.wintypes.HANDLE]
+        user32.SetClipboardData.restype = ctypes.wintypes.HANDLE
+        user32.CloseClipboard.restype = ctypes.wintypes.BOOL
+
+        kernel32.GlobalAlloc.argtypes = [ctypes.wintypes.UINT, ctypes.c_size_t]
+        kernel32.GlobalAlloc.restype = ctypes.wintypes.HGLOBAL
+        kernel32.GlobalLock.argtypes = [ctypes.wintypes.HGLOBAL]
+        kernel32.GlobalLock.restype = ctypes.c_void_p
+        kernel32.GlobalUnlock.argtypes = [ctypes.wintypes.HGLOBAL]
+        kernel32.GlobalUnlock.restype = ctypes.wintypes.BOOL
+
+        if not user32.OpenClipboard(None):
+            return False
+        try:
+            user32.EmptyClipboard()
+            if not text:
+                return True
+            encoded = text.encode("utf-16-le") + b"\x00\x00"
+            h_mem = kernel32.GlobalAlloc(0x0002, len(encoded))  # GMEM_MOVEABLE = 0x0002
+            if not h_mem:
+                return False
+            p_mem = kernel32.GlobalLock(h_mem)
+            if not p_mem:
+                return False
+            try:
+                ctypes.memmove(p_mem, encoded, len(encoded))
+            finally:
+                kernel32.GlobalUnlock(h_mem)
+            user32.SetClipboardData(CF_UNICODETEXT, h_mem)
+            return True
+        finally:
+            user32.CloseClipboard()
+    except Exception as exc:
+        logger.debug(f"[ContextManager] Write clipboard error: {exc}")
+        return False
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Selected text
 # ─────────────────────────────────────────────────────────────────────────────
@@ -205,9 +253,9 @@ def _query_selected_text(prior_clipboard: str) -> str:
     """
     if not _is_win32():
         return ""
+    selected_result = ""
     try:
-        user32   = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
+        user32 = ctypes.windll.user32
 
         # Send Ctrl+C keydown → keyup
         user32.keybd_event(VK_CONTROL, 0, 0, 0)
@@ -221,11 +269,15 @@ def _query_selected_text(prior_clipboard: str) -> str:
 
         # Only return if the clipboard actually changed
         if new_clipboard and new_clipboard != prior_clipboard:
-            return new_clipboard[:2000]
-        return ""
+            selected_result = new_clipboard[:2000]
     except Exception as exc:
         logger.debug(f"[ContextManager] Selected text error: {exc}")
-        return ""
+    finally:
+        # Step 4: Restore original clipboard contents to preserve user clipboard state
+        if prior_clipboard is not None:
+            _write_clipboard_unicode(prior_clipboard)
+
+    return selected_result
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -28,7 +28,12 @@ class PlanOptimizer:
         
         optimized_steps: List[PlanStepModel] = []
         for new_id, step in enumerate(unique_steps, start=1):
-            valid_deps = [id_mapping[dep] for dep in step.depends_on if dep in id_mapping and dep != step.step_id]
+            valid_deps = []
+            for dep in step.depends_on:
+                if dep in id_mapping and dep != step.step_id:
+                    valid_deps.append(id_mapping[dep])
+                else:
+                    logger.debug(f"[PlanOptimizer] Pruned dependency link {dep} from step {step.step_id}")
             optimized_steps.append(
                 PlanStepModel(
                     step_id=new_id,

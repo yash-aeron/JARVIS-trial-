@@ -53,7 +53,7 @@ class WakeWordDetector:
         """Return True if transcript contains a wake-word."""
         for pat in self._PATTERNS:
             if pat.search(transcript):
-                logger.info(f"[WakeWordDetector] Wake-word detected in transcript.")
+                logger.info(f"[WakeWordDetector] Wake-word '{self.keyphrase}' detected in transcript.")
                 return True
         return False
 

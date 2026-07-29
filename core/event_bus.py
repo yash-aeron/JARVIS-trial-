@@ -41,7 +41,15 @@ class AsyncEventBus(IEventBus):
                 handlers_to_call.extend(handlers)
                 
         if handlers_to_call:
-            await asyncio.gather(*(h(current_event) for h in handlers_to_call), return_exceptions=True)
+            results = await asyncio.gather(*(h(current_event) for h in handlers_to_call), return_exceptions=True)
+            for handler, res in zip(handlers_to_call, results):
+                if isinstance(res, Exception):
+                    handler_name = getattr(handler, "__name__", str(handler))
+                    logger.error(
+                        f"[AsyncEventBus] Exception in subscriber '{handler_name}' "
+                        f"on topic '{current_event.topic}' [CID: {current_event.correlation_id}]: {res}",
+                        exc_info=res
+                    )
 
     def subscribe(self, topic: str, handler: Callable[[EventModel], Awaitable[None]]) -> None:
         if topic not in self._subscribers:
