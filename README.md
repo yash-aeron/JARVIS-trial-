@@ -7,9 +7,9 @@ JARVIS is an event-driven, modular AI Operating System Assistant designed for pr
 ## Key Features
 
 - **Local-First Architecture**: Prioritizes local processing using models such as Ollama, Whisper, ChromaDB, and local TTS, ensuring data privacy and low execution latency.
-- **Type-Based Dependency Injection**: Eliminates string-based service names. Services and factories are registered and resolved using strict Class and Interface types (`container.resolve(IPlanner)`).
-- **Persistent Event Sourcing**: Asynchronous communications powered by `AsyncEventBus` with unified Correlation IDs. Every system event is persisted to a local SQLite Event Store (`data/event_store.db`) for black-box session replay.
-- **Decoupled LLM-First Planner**: Generates capability-based plans from structured LLM JSON outputs. Prompt management is handled by `PromptManager`, schema validation by `PlanValidator`, and offline steps by `FallbackPlanner`.
+- **Type-Based & Config-Driven DI**: Registers and resolves singletons and factories using strict Class and Interface types (`container.resolve(ISTTProvider)`). Providers (`ISTTProvider`, `ITTSProvider`, `ILLMProvider`) are selected dynamically based on active configuration profiles.
+- **Strongly-Typed Persistent Event Sourcing**: Asynchronous communications powered by `AsyncEventBus` with unified Correlation IDs. Every system event carries a strongly-typed Pydantic payload (`EventModel.payload`) and is persisted to a local SQLite Event Store (`data/event_store.db`) for black-box session replay.
+- **Decoupled LLM-First Planner**: Generates capability-based plans from structured LLM JSON outputs. Prompt management is injected via DI (`PromptManager`), schema validation enforced by `PlanValidator` (verifying step IDs, dependency references, and registered capabilities), and offline steps handled by `FallbackPlanner`.
 - **Dependency-Aware Parallel Execution**: Analyzes step dependencies (`depends_on`) and executes independent tasks concurrently via `asyncio.gather(*tasks)` through `PlanExecutor` and `ActionQueue`.
 - **Pluggable Context-Aware Tool Scorer**: `ToolRegistry` uses an `IRankingStrategy` to evaluate capability specialization, permission level, runtime context (Windows foreground window & clipboard), and execution speed.
 - **Native Process Control & App Focus**: `ApplicationLauncherTool` detects running processes (`psutil`), bringing existing application windows to the foreground or spawning new native subprocesses.
