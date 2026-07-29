@@ -1,0 +1,12 @@
+profile_name: "Developer"
+description: "Optimized for coding, terminal execution, git, and high performance"
+permissions:
+  allow_terminal: true
+  allow_file_write: true
+  allow_process_spawn: true
+  default_level: "HIGH"
+active_modes: ["Coding", "Developer"]
+vram_budget_gb: 4.0
+auto_unload_llm: false
+speech_enabled: true
+dashboard_layout: "developer_full"

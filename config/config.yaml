@@ -1,0 +1,34 @@
+system:
+  name: "JARVIS"
+  version: "1.0.0"
+  environment: "production"
+  default_profile: "Developer"
+  default_language: "en-US"
+  fallback_language: "en-US"
+  data_dir: "data"
+
+models:
+  llm_provider: "ollama"
+  llm_model: "qwen2.5-coder"
+  stt_provider: "whisper"
+  stt_model: "base"
+  tts_provider: "edge-tts"
+  tts_voice: "en-US-ChristopherNeural"
+  embeddings_model: "all-MiniLM-L6-v2"
+
+resource_limits:
+  max_vram_gb: 4.0
+  max_ram_gb: 8.0
+  enable_gpu_offload: true
+  auto_unload_idle_models_sec: 300
+
+security:
+  owner_name: "Boss"
+  voice_verification_enabled: false
+  default_permission_level: "MEDIUM"
+
+dashboard:
+  theme: "dark_glassmorphic"
+  fps: 30
+  show_timeline: true
+  show_dependency_graph: true

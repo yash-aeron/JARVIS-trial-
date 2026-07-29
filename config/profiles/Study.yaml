@@ -1,0 +1,11 @@
+profile_name: "Study"
+description: "Focus mode with RAG knowledge search and note-taking"
+permissions:
+  allow_terminal: false
+  allow_file_write: true
+  default_level: "MEDIUM"
+active_modes: ["Study", "Focus"]
+vram_budget_gb: 2.0
+auto_unload_llm: true
+speech_enabled: true
+dashboard_layout: "study_notes"

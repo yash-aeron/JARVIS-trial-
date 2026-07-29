@@ -1,0 +1,11 @@
+profile_name: "Gaming"
+description: "Minimal VRAM & background usage for maximum game FPS"
+permissions:
+  allow_terminal: false
+  allow_file_write: false
+  default_level: "LOW"
+active_modes: ["Gaming", "Focus"]
+vram_budget_gb: 0.5
+auto_unload_llm: true
+speech_enabled: false
+dashboard_layout: "compact"
