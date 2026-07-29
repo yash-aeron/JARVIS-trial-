@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Any
 from pydantic import BaseModel
 from agent.decision_engine import DecisionEngine, AgentDecisionModel
 from brain.intent_engine import IntentEngine, IntentResultModel
@@ -15,13 +15,24 @@ class ExecutiveProcessResultModel(BaseModel):
     decision: AgentDecisionModel
 
 class ExecutiveAgent:
-    """Executive controller evaluating requests and emitting typed IntentDetectedEventData payloads."""
-    
-    def __init__(self, intent_engine: IntentEngine, state_manager: StateManager, event_bus: Optional[IEventBus] = None):
+    """Executive controller orchestrating subagents and emitting typed IntentDetectedEventData payloads over AsyncEventBus."""
+
+    def __init__(
+        self, 
+        intent_engine: IntentEngine, 
+        state_manager: StateManager, 
+        event_bus: Optional[IEventBus] = None,
+        planning_subagent: Optional[Any] = None,
+        memory_subagent: Optional[Any] = None,
+        execution_subagent: Optional[Any] = None
+    ):
         self.intent_engine = intent_engine
         self.decision_engine = DecisionEngine()
         self.state_manager = state_manager
         self.event_bus = event_bus
+        self.planning_subagent = planning_subagent
+        self.memory_subagent = memory_subagent
+        self.execution_subagent = execution_subagent
 
     async def process(
         self, 

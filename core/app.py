@@ -85,10 +85,18 @@ def _register_brain(container: DependencyContainer) -> None:
     container.register_singleton(PlanOptimizer, PlanOptimizer())
     
     container.register_factory(IntentEngine, lambda c: IntentEngine(c.resolve(ILLMProvider)))
+    from agent.subagents import PlanningSubagent, MemorySubagent, ExecutionSubagent
+    container.register_factory(PlanningSubagent, lambda c: PlanningSubagent(c.resolve(Planner), c.resolve(IEventBus)))
+    container.register_factory(MemorySubagent, lambda c: MemorySubagent(c.resolve(MemoryManager), c.resolve(IEventBus)))
+    container.register_factory(ExecutionSubagent, lambda c: ExecutionSubagent(c.resolve(PlanExecutor), c.resolve(IEventBus)))
+
     container.register_factory(ExecutiveAgent, lambda c: ExecutiveAgent(
         c.resolve(IntentEngine), 
         c.resolve(StateManager), 
-        c.resolve(IEventBus)
+        c.resolve(IEventBus),
+        planning_subagent=c.resolve(PlanningSubagent),
+        memory_subagent=c.resolve(MemorySubagent),
+        execution_subagent=c.resolve(ExecutionSubagent)
     ))
     container.register_factory(Planner, lambda c: Planner(
         llm=c.resolve(ILLMProvider), 
