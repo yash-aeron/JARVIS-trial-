@@ -1,60 +1,55 @@
-from dataclasses import dataclass
-from enum import Enum, auto
+from enum import Enum
 from typing import Dict, Any, List, Optional
+from pydantic import BaseModel, Field
 from core.interfaces import ILLMProvider
 from observability.logger import logger
 
-class IntentCategory(Enum):
-    CONVERSATION = auto()
-    MULTI_STEP_PLAN = auto()
-    SINGLE_TOOL = auto()
-    SYSTEM_CONTROL = auto()
-    QUERY_MEMORY = auto()
-    REJECT = auto()
+class IntentCategory(str, Enum):
+    CONVERSATION = "CONVERSATION"
+    MULTI_STEP_PLAN = "MULTI_STEP_PLAN"
+    SINGLE_TOOL = "SINGLE_TOOL"
+    SYSTEM_CONTROL = "SYSTEM_CONTROL"
+    QUERY_MEMORY = "QUERY_MEMORY"
+    REJECT = "REJECT"
 
-@dataclass
-class IntentResult:
+class IntentResultModel(BaseModel):
     category: IntentCategory
-    capabilities_needed: List[str]
-    confidence: float
+    capabilities_needed: List[str] = Field(default_factory=list)
+    confidence: float = 1.0
     raw_utterance: str
+    correlation_id: str
 
 class IntentEngine:
-    """Classifies user utterances into actionable Intent Categories."""
+    """Classifies user utterances into actionable Pydantic IntentResultModel."""
     
     def __init__(self, llm_provider: ILLMProvider):
         self.llm = llm_provider
 
-    async def classify(self, utterance: str, context: Optional[Dict[str, Any]] = None) -> IntentResult:
+    async def classify(self, utterance: str, correlation_id: str, context: Optional[Dict[str, Any]] = None) -> IntentResultModel:
         text_lower = utterance.lower()
         
-        # Rule-based fast paths for instant classification
-        if any(w in text_lower for w in ["open", "run", "launch", "clone", "install", "search for", "search"]):
-            if any(w in text_lower for w in ["and", "then", "after", "also"]):
-                return IntentResult(
+        # Capability-oriented intent matching
+        if any(w in text_lower for w in ["open", "run", "launch", "kholo", "start"]):
+            if any(w in text_lower for w in ["and", "then", "after", "search", "clone"]):
+                return IntentResultModel(
                     category=IntentCategory.MULTI_STEP_PLAN,
-                    capabilities_needed=["app_automation", "terminal", "web_search"],
+                    capabilities_needed=["open_application", "web_search", "terminal_execution"],
                     confidence=0.95,
-                    raw_utterance=utterance
+                    raw_utterance=utterance,
+                    correlation_id=correlation_id
                 )
-            return IntentResult(
+            return IntentResultModel(
                 category=IntentCategory.SINGLE_TOOL,
-                capabilities_needed=["app_automation"],
+                capabilities_needed=["open_application"],
                 confidence=0.90,
-                raw_utterance=utterance
+                raw_utterance=utterance,
+                correlation_id=correlation_id
             )
             
-        if any(w in text_lower for w in ["who", "what", "how", "why", "hello", "hi", "hey"]):
-            return IntentResult(
-                category=IntentCategory.CONVERSATION,
-                capabilities_needed=[],
-                confidence=0.90,
-                raw_utterance=utterance
-            )
-            
-        return IntentResult(
+        return IntentResultModel(
             category=IntentCategory.CONVERSATION,
             capabilities_needed=[],
-            confidence=0.80,
-            raw_utterance=utterance
+            confidence=0.85,
+            raw_utterance=utterance,
+            correlation_id=correlation_id
         )

@@ -1,15 +1,15 @@
 from typing import Dict, Any, Optional, List
-from brain.planner import ExecutionPlan
+from brain.planner import ExecutionPlanModel, PlanStepModel
 from tools.registry import ToolRegistry
-from automation.action_queue import ActionQueue, ActionItem, ActionQueueState
+from automation.action_queue import ActionQueue, ActionItemModel, ActionQueueState
 from automation.undo_manager import UndoManager
 from state.state_manager import StateManager
 from state.states import AssistantState
-from core.interfaces import IEventBus, Event
+from core.interfaces import IEventBus, EventModel, ToolRequestModel, ToolResultModel
 from observability.logger import logger
 
 class PlanExecutor:
-    """Carries out ExecutionPlan execution step-by-step through the ActionQueue."""
+    """Event-driven PlanExecutor resolving capabilities dynamically via ToolRegistry."""
     
     def __init__(
         self, 
@@ -24,44 +24,80 @@ class PlanExecutor:
         self.event_bus = event_bus
         self.action_queue = ActionQueue()
 
-    async def execute_plan(self, plan: ExecutionPlan) -> List[Dict[str, Any]]:
-        self.state_manager.set_state(AssistantState.EXECUTING, f"Executing plan {plan.plan_id}")
-        results = []
+    async def execute_plan(self, plan: ExecutionPlanModel) -> List[ToolResultModel]:
+        cid = plan.correlation_id
+        self.state_manager.set_state(AssistantState.EXECUTING, f"Executing plan {plan.plan_id}", correlation_id=cid)
+        results: List[ToolResultModel] = []
         
         for step in plan.steps:
-            item = ActionItem(item_id=f"{plan.plan_id}_step_{step.step_id}", tool_name=step.tool_name, args=step.args)
+            item = ActionItemModel(
+                item_id=f"{plan.plan_id}_step_{step.step_id}",
+                correlation_id=cid,
+                capability=step.capability,
+                args=step.args
+            )
             self.action_queue.enqueue(item)
             item.state = ActionQueueState.RUNNING
             
-            tool = self.tool_registry.get(step.tool_name)
-            if not tool:
+            # Capability Discovery
+            matching_tools = self.tool_registry.find_by_capability(step.capability)
+            if not matching_tools:
                 item.state = ActionQueueState.FAILED
-                item.error = f"Tool '{step.tool_name}' not found."
+                item.error = f"No tools found offering capability '{step.capability}'."
                 logger.error(item.error)
-                results.append({"step_id": step.step_id, "status": "failed", "error": item.error})
+                res = ToolResultModel(request_id=item.item_id, correlation_id=cid, status="failed", error=item.error)
+                results.append(res)
                 break
                 
-            try:
-                res = await tool.execute(**step.args)
-                item.state = ActionQueueState.COMPLETED
-                item.result = res
-                self.undo_manager.record(tool, step.args, res)
-                results.append({"step_id": step.step_id, "status": "completed", "result": res})
+            tool = matching_tools[0]  # Select primary capability tool
+            tool_req = ToolRequestModel(
+                request_id=item.item_id,
+                correlation_id=cid,
+                capability=step.capability,
+                tool_name=tool.metadata.name,
+                args=step.args
+            )
+            
+            # Publish tool.started event
+            if self.event_bus:
+                await self.event_bus.publish(
+                    EventModel(
+                        correlation_id=cid,
+                        topic="tool.started",
+                        data={"step_id": step.step_id, "capability": step.capability, "tool": tool.metadata.name},
+                        sender="PlanExecutor"
+                    )
+                )
                 
+            try:
+                tool_res = await tool.execute(tool_req)
+                if tool_res.status == "completed":
+                    item.state = ActionQueueState.COMPLETED
+                    item.result = tool_res.result
+                    self.undo_manager.record(tool, tool_req, tool_res)
+                else:
+                    item.state = ActionQueueState.FAILED
+                    item.error = tool_res.error
+                    
+                results.append(tool_res)
+                
+                # Publish tool.finished event
                 if self.event_bus:
                     await self.event_bus.publish(
-                        Event(
+                        EventModel(
+                            correlation_id=cid,
                             topic="tool.finished",
-                            data={"step_id": step.step_id, "tool": step.tool_name, "result": res},
+                            data={"step_id": step.step_id, "tool": tool.metadata.name, "status": tool_res.status, "result": tool_res.result},
                             sender="PlanExecutor"
                         )
                     )
             except Exception as e:
                 item.state = ActionQueueState.FAILED
                 item.error = str(e)
-                logger.error(f"Step {step.step_id} execution failed: {e}")
-                results.append({"step_id": step.step_id, "status": "failed", "error": str(e)})
+                logger.error(f"Step {step.step_id} failed: {e}")
+                res = ToolResultModel(request_id=item.item_id, correlation_id=cid, status="failed", error=str(e))
+                results.append(res)
                 break
                 
-        self.state_manager.set_state(AssistantState.IDLE, "Plan execution complete")
+        self.state_manager.set_state(AssistantState.IDLE, "Execution complete", correlation_id=cid)
         return results

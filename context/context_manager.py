@@ -1,8 +1,7 @@
-from dataclasses import dataclass, field
+from pydantic import BaseModel, Field
 from typing import Dict, Any, Optional
 
-@dataclass
-class RuntimeContextSnapshot:
+class ContextSnapshotModel(BaseModel):
     focused_app: str = "VS Code"
     active_project: str = "JARVIS"
     clipboard_content: str = ""
@@ -13,12 +12,12 @@ class ContextManager:
     """Manages real-time transient runtime context snapshot (Focused app, Clipboard, Active project)."""
     
     def __init__(self):
-        self._snapshot = RuntimeContextSnapshot()
+        self._snapshot = ContextSnapshotModel()
 
-    def get_snapshot(self) -> RuntimeContextSnapshot:
+    def get_snapshot(self) -> ContextSnapshotModel:
         return self._snapshot
 
     def update(self, **kwargs) -> None:
-        for k, v in kwargs.items():
-            if hasattr(self._snapshot, k):
-                setattr(self._snapshot, k, v)
+        updated_dict = self._snapshot.model_dump()
+        updated_dict.update(kwargs)
+        self._snapshot = ContextSnapshotModel(**updated_dict)

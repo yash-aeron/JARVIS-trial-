@@ -1,22 +1,18 @@
 import asyncio
 import uuid
-from typing import Dict, List, Callable, Awaitable, Any
-from core.interfaces import IEventBus, Event
+from typing import Dict, List, Callable, Awaitable
+from core.interfaces import IEventBus, EventModel
 
 class AsyncEventBus(IEventBus):
-    """Async Event & Message Bus with Event Store tracking (Event Sourcing)."""
+    """Async Event & Message Bus with Event Store tracking and Correlation IDs."""
     
     def __init__(self):
-        self._subscribers: Dict[str, List[Callable[[Event], Awaitable[None]]]] = {}
-        self._event_store: List[Event] = []
+        self._subscribers: Dict[str, List[Callable[[EventModel], Awaitable[None]]]] = {}
+        self._event_store: List[EventModel] = []
 
-    async def publish(self, event: Event) -> None:
-        if not event.event_id:
-            event.event_id = str(uuid.uuid4())
-            
+    async def publish(self, event: EventModel) -> None:
         self._event_store.append(event)
         
-        # Wildcard matching support (e.g. "speech.*", "*")
         handlers_to_call = []
         for topic, handlers in self._subscribers.items():
             if topic == "*" or topic == event.topic or (topic.endswith(".*") and event.topic.startswith(topic[:-2])):
@@ -25,15 +21,17 @@ class AsyncEventBus(IEventBus):
         if handlers_to_call:
             await asyncio.gather(*(h(event) for h in handlers_to_call), return_exceptions=True)
 
-    def subscribe(self, topic: str, handler: Callable[[Event], Awaitable[None]]) -> None:
+    def subscribe(self, topic: str, handler: Callable[[EventModel], Awaitable[None]]) -> None:
         if topic not in self._subscribers:
             self._subscribers[topic] = []
         if handler not in self._subscribers[topic]:
             self._subscribers[topic].append(handler)
 
-    def unsubscribe(self, topic: str, handler: Callable[[Event], Awaitable[None]]) -> None:
+    def unsubscribe(self, topic: str, handler: Callable[[EventModel], Awaitable[None]]) -> None:
         if topic in self._subscribers and handler in self._subscribers[topic]:
             self._subscribers[topic].remove(handler)
 
-    def get_event_history(self, limit: int = 100) -> List[Event]:
+    def get_event_history(self, correlation_id: str = None, limit: int = 100) -> List[EventModel]:
+        if correlation_id:
+            return [ev for ev in self._event_store if ev.correlation_id == correlation_id][-limit:]
         return self._event_store[-limit:]

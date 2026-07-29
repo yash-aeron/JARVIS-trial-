@@ -1,5 +1,5 @@
 from typing import Dict, Any, List, Optional
-from core.interfaces import ITool
+from core.interfaces import ITool, ToolMetadata, ToolRequestModel, ToolResultModel
 from observability.logger import logger
 
 class ToolRegistry:
@@ -25,17 +25,11 @@ class ToolRegistry:
         return self._tools.get(name)
 
     def find_by_capability(self, capability: str) -> List[ITool]:
-        """Capability Discovery mechanism decoupling tool names from intent."""
+        """Capability Discovery mechanism decoupling tool names from intent/planner."""
         return self._capabilities_map.get(capability, [])
 
     def list_all(self) -> List[Dict[str, Any]]:
         return [
-            {
-                "name": t.metadata.name,
-                "description": t.metadata.description,
-                "capabilities": t.metadata.capabilities,
-                "permission_level": t.metadata.permission_level,
-                "version": t.metadata.version
-            }
+            t.metadata.model_dump()
             for t in self._tools.values()
         ]

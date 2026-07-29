@@ -1,9 +1,10 @@
+import uuid
 import asyncio
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 from config.settings import Settings
 from core.container import DependencyContainer
-from core.event_bus import AsyncEventBus, Event
+from core.event_bus import AsyncEventBus, EventModel
 from core.service_manager import ServiceManager
 from state.state_manager import StateManager
 from state.states import AssistantState
@@ -14,9 +15,9 @@ from models.stt import WhisperSTTProvider
 from models.tts import EdgeTTSProvider
 from speech.speech_manager import SpeechManager
 
-from brain.intent_engine import IntentEngine
-from brain.planner import Planner
-from agent.executive import ExecutiveAgent
+from brain.intent_engine import IntentEngine, IntentResultModel
+from brain.planner import Planner, ExecutionPlanModel
+from agent.executive import ExecutiveAgent, AgentDecisionModel
 
 from tools.registry import ToolRegistry
 from tools.system_tools import SystemControlTool, ApplicationLauncherTool
@@ -32,24 +33,25 @@ from plugins.plugin_manager import PluginManager
 from observability.logger import logger
 
 class JARVISApp:
-    """Master Application Orchestrator initializing and coordinating all JARVIS subsystems."""
+    """Master Application Orchestrator built on Dependency Injection and Event-Driven Architecture."""
     
     def __init__(self):
-        logger.info("Initializing JARVIS AI Operating System Assistant Master Core...")
+        logger.info("Initializing JARVIS AI Operating System Assistant via Dependency Injection...")
         
-        # 1. Foundation & Configuration
-        self.settings = Settings()
         self.container = DependencyContainer()
+        
+        # 1. Register Core Infrastructure Singletons
+        self.settings = Settings()
         self.event_bus = AsyncEventBus()
         self.state_manager = StateManager(self.event_bus)
         self.service_manager = ServiceManager()
         
-        # Register Core Singletons
         self.container.register_singleton("Settings", self.settings)
-        self.container.register_singleton("AsyncEventBus", self.event_bus)
+        self.container.register_singleton("IEventBus", self.event_bus)
         self.container.register_singleton("StateManager", self.state_manager)
+        self.container.register_singleton("ServiceManager", self.service_manager)
         
-        # 2. Language & Speech
+        # 2. Register Language & Speech Services
         self.language_manager = LanguageManager(self.settings)
         self.stt_provider = WhisperSTTProvider()
         self.tts_provider = EdgeTTSProvider()
@@ -60,15 +62,23 @@ class JARVISApp:
             state_manager=self.state_manager,
             event_bus=self.event_bus
         )
+        
+        self.container.register_singleton("LanguageManager", self.language_manager)
+        self.container.register_singleton("SpeechManager", self.speech_manager)
         self.service_manager.register_service(self.speech_manager)
         
-        # 3. LLM & Brain & Executive Agent
+        # 3. Register Brain, Intelligence & Executive Agent
         self.llm_provider = OllamaLLMProvider()
         self.intent_engine = IntentEngine(self.llm_provider)
-        self.executive_agent = ExecutiveAgent(self.intent_engine, self.state_manager)
-        self.planner = Planner(self.llm_provider, self.state_manager)
+        self.executive_agent = ExecutiveAgent(self.intent_engine, self.state_manager, self.event_bus)
+        self.planner = Planner(self.llm_provider, self.state_manager, self.event_bus)
         
-        # 4. Tools, Automation & Skills
+        self.container.register_singleton("ILLMProvider", self.llm_provider)
+        self.container.register_singleton("IntentEngine", self.intent_engine)
+        self.container.register_singleton("ExecutiveAgent", self.executive_agent)
+        self.container.register_singleton("Planner", self.planner)
+        
+        # 4. Register Tools, Skills & Automation
         self.tool_registry = ToolRegistry()
         self.tool_registry.register(SystemControlTool())
         self.tool_registry.register(ApplicationLauncherTool())
@@ -82,51 +92,72 @@ class JARVISApp:
         )
         self.skill_engine = SkillEngine(self.tool_registry)
         
-        # 5. Memory, Context, Sessions & Modes
+        self.container.register_singleton("ToolRegistry", self.tool_registry)
+        self.container.register_singleton("UndoManager", self.undo_manager)
+        self.container.register_singleton("PlanExecutor", self.executor)
+        self.container.register_singleton("SkillEngine", self.skill_engine)
+        
+        # 5. Register Memory, Context, Session, Mode & Plugins
         self.memory_manager = MemoryManager()
         self.context_manager = ContextManager()
         self.session_manager = SessionManager()
         self.mode_manager = ModeManager(initial_mode="Developer")
         self.plugin_manager = PluginManager(self.container)
+        
+        self.container.register_singleton("MemoryManager", self.memory_manager)
+        self.container.register_singleton("ContextManager", self.context_manager)
+        self.container.register_singleton("SessionManager", self.session_manager)
+        self.container.register_singleton("ModeManager", self.mode_manager)
+        self.container.register_singleton("PluginManager", self.plugin_manager)
 
     async def initialize(self) -> None:
-        await self.service_manager.start_all()
-        logger.info("JARVIS Subsystems initialized successfully.")
+        service_mgr: ServiceManager = self.container.resolve("ServiceManager")
+        await service_mgr.start_all()
+        logger.info("JARVIS Subsystems online and active.")
 
     async def shutdown(self) -> None:
-        await self.service_manager.stop_all()
-        logger.info("JARVIS Shutdown complete.")
+        service_mgr: ServiceManager = self.container.resolve("ServiceManager")
+        await service_mgr.stop_all()
+        logger.info("JARVIS Subsystems shutdown cleanly.")
 
-    async def process_user_command(self, utterance: str) -> Dict[str, Any]:
-        """Core execution pipeline: Utterance -> Executive Agent -> Intent -> Planner -> Executor -> Response."""
-        logger.info(f"[USER COMMAND]: {utterance}")
+    async def process_user_command(self, utterance: str, correlation_id: Optional[str] = None) -> Dict[str, Any]:
+        """End-to-End Vertical Slice Pipeline:
+           Audio/Text -> Correlation ID -> Executive Agent -> Intent -> Planner -> Action Queue -> Executor -> Subprocess Launch -> Speech Output.
+        """
+        cid = correlation_id or str(uuid.uuid4())
+        logger.info(f"[USER COMMAND] [CID: {cid}]: '{utterance}'")
         
-        # Executive Agent Evaluation
-        executive_res = await self.executive_agent.process(utterance)
-        intent = executive_res["intent"]
-        decision = executive_res["decision"]
+        # Resolve dependencies strictly via container
+        exec_agent: ExecutiveAgent = self.container.resolve("ExecutiveAgent")
+        planner: Planner = self.container.resolve("Planner")
+        executor: PlanExecutor = self.container.resolve("PlanExecutor")
+        speech_mgr: SpeechManager = self.container.resolve("SpeechManager")
+        
+        # Step 1: Executive Agent Processing
+        executive_res = await exec_agent.process(utterance, correlation_id=cid)
+        intent: IntentResultModel = executive_res["intent"]
+        decision: AgentDecisionModel = executive_res["decision"]
         
         results = []
-        if decision.needs_planning:
-            # Multi-step Plan Execution
-            plan = await self.planner.create_plan(utterance, intent.capabilities_needed)
-            results = await self.executor.execute_plan(plan)
-            response = f"Sir, I have executed your plan for '{utterance}' across {len(plan.steps)} steps."
-        else:
-            # Single action or natural dialogue
-            if intent.capabilities_needed:
-                tool = self.tool_registry.get("app_launcher")
-                if tool:
-                    res = await tool.execute(app_name="VS Code", action="launch")
-                    results.append(res)
-            response = f"Sir, I have processed your command: '{utterance}'."
-            self.state_manager.set_state(AssistantState.IDLE, "Command response generated")
+        if decision.needs_planning or intent.capabilities_needed:
+            # Step 2: Multi-step / Capability Planning
+            plan: ExecutionPlanModel = await planner.create_plan(utterance, intent.capabilities_needed, correlation_id=cid)
             
-        await self.speech_manager.speak(response)
+            # Step 3: Execution via Action Queue & Real Tool / Subprocess Execution
+            tool_results = await executor.execute_plan(plan)
+            results = [tr.model_dump() for tr in tool_results]
+            response = f"Sir, I have executed your request for '{utterance}'."
+        else:
+            response = f"Sir, I am online and listening: '{utterance}'."
+            self.state_manager.set_state(AssistantState.IDLE, "Response generated", correlation_id=cid)
+            
+        # Step 4: Speech Synthesis & Output
+        await speech_mgr.speak(response, correlation_id=cid)
         
         return {
+            "correlation_id": cid,
             "utterance": utterance,
-            "intent": intent.category.name,
+            "intent": intent.category.value,
             "execution_results": results,
             "response": response
         }

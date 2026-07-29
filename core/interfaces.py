@@ -1,27 +1,28 @@
+import uuid
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Callable, Awaitable
-from dataclasses import dataclass, field
+from pydantic import BaseModel, Field
 from datetime import datetime
 
-@dataclass
-class Event:
+class EventModel(BaseModel):
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    correlation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     topic: str
-    data: Dict[str, Any]
     sender: str
-    timestamp: float = field(default_factory=lambda: datetime.now().timestamp())
-    event_id: Optional[str] = None
+    timestamp: float = Field(default_factory=lambda: datetime.now().timestamp())
+    data: Dict[str, Any] = Field(default_factory=dict)
 
 class IEventBus(ABC):
     @abstractmethod
-    async def publish(self, event: Event) -> None:
+    async def publish(self, event: EventModel) -> None:
         pass
 
     @abstractmethod
-    def subscribe(self, topic: str, handler: Callable[[Event], Awaitable[None]]) -> None:
+    def subscribe(self, topic: str, handler: Callable[[EventModel], Awaitable[None]]) -> None:
         pass
 
     @abstractmethod
-    def unsubscribe(self, topic: str, handler: Callable[[Event], Awaitable[None]]) -> None:
+    def unsubscribe(self, topic: str, handler: Callable[[EventModel], Awaitable[None]]) -> None:
         pass
 
 class IService(ABC):
@@ -61,14 +62,27 @@ class ITTSProvider(ABC):
     async def synthesize(self, text: str, voice: Optional[str] = None, language: Optional[str] = None) -> bytes:
         pass
 
-@dataclass
-class ToolMetadata:
+class ToolMetadata(BaseModel):
     name: str
     description: str
     capabilities: List[str]
     permission_level: str  # LOW, MEDIUM, HIGH, CRITICAL
-    args_schema: Dict[str, Any]
+    args_schema: Dict[str, Any] = Field(default_factory=dict)
     version: str = "1.0.0"
+
+class ToolRequestModel(BaseModel):
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    correlation_id: str
+    capability: str
+    tool_name: Optional[str] = None
+    args: Dict[str, Any] = Field(default_factory=dict)
+
+class ToolResultModel(BaseModel):
+    request_id: str
+    correlation_id: str
+    status: str  # "completed", "failed", "undone"
+    result: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
 
 class ITool(ABC):
     @property
@@ -77,11 +91,11 @@ class ITool(ABC):
         pass
 
     @abstractmethod
-    async def execute(self, **kwargs) -> Dict[str, Any]:
+    async def execute(self, request: ToolRequestModel) -> ToolResultModel:
         pass
 
     @abstractmethod
-    async def undo(self, **kwargs) -> Dict[str, Any]:
+    async def undo(self, request: ToolRequestModel) -> ToolResultModel:
         pass
 
 class ISkill(ABC):

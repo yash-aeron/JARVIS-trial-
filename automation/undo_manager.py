@@ -1,5 +1,5 @@
 from typing import List, Dict, Any
-from core.interfaces import ITool
+from core.interfaces import ITool, ToolRequestModel, ToolResultModel
 from observability.logger import logger
 
 class UndoManager:
@@ -8,22 +8,27 @@ class UndoManager:
     def __init__(self):
         self._history: List[Dict[str, Any]] = []
 
-    def record(self, tool: ITool, kwargs: Dict[str, Any], result: Dict[str, Any]) -> None:
+    def record(self, tool: ITool, request: ToolRequestModel, result: ToolResultModel) -> None:
         self._history.append({
             "tool": tool,
-            "kwargs": kwargs,
+            "request": request,
             "result": result
         })
-        logger.debug(f"[UndoManager] Recorded action for tool '{tool.metadata.name}'")
+        logger.debug(f"[UndoManager] Recorded action for tool '{tool.metadata.name}' [CID: {request.correlation_id}]")
 
-    async def rollback_last(self) -> Dict[str, Any]:
+    async def rollback_last(self) -> ToolResultModel:
         if not self._history:
-            return {"status": "error", "message": "No actions available to undo."}
+            return ToolResultModel(
+                request_id="none",
+                correlation_id="none",
+                status="failed",
+                error="No recorded actions to undo."
+            )
             
         last_item = self._history.pop()
         tool: ITool = last_item["tool"]
-        kwargs: Dict[str, Any] = last_item["kwargs"]
+        request: ToolRequestModel = last_item["request"]
         
         logger.info(f"[UndoManager] Rolling back action for tool '{tool.metadata.name}'")
-        undo_res = await tool.undo(**kwargs)
+        undo_res = await tool.undo(request)
         return undo_res
