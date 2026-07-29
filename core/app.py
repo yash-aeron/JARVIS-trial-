@@ -26,7 +26,7 @@ from brain.plan_optimizer import PlanOptimizer
 from agent.executive import ExecutiveAgent, AgentDecisionModel
 
 from tools.registry import ToolRegistry
-from tools.system_tools import SystemControlTool, ApplicationLauncherTool, ContextReaderTool
+from tools.system_tools import SystemControlTool, ApplicationLauncherTool, ContextReaderTool, MemoryManagementTool
 from automation.undo_manager import UndoManager
 from automation.executor import PlanExecutor
 from skills.skill_engine import SkillEngine
@@ -108,10 +108,12 @@ def _register_memory(container: DependencyContainer) -> None:
 
 def _register_automation(container: DependencyContainer) -> None:
     context_mgr = container.resolve(ContextManager)
+    memory_mgr = container.resolve(MemoryManager)
     tool_reg = ToolRegistry()
     tool_reg.register(SystemControlTool())
     tool_reg.register(ApplicationLauncherTool())
     tool_reg.register(ContextReaderTool(context_manager=context_mgr))
+    tool_reg.register(MemoryManagementTool(memory_manager=memory_mgr))
     container.register_singleton(ToolRegistry, tool_reg)
 
     container.register_singleton(UndoManager, UndoManager())
