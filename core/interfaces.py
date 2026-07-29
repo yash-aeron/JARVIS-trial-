@@ -5,97 +5,118 @@ from core.models import EventModel, ToolMetadata, ToolRequestModel, ToolResultMo
 class IEventBus(ABC):
     @abstractmethod
     async def publish(self, event: EventModel) -> None:
-        pass
+        """Publishes an event asynchronously across the bus to all registered topic subscribers."""
+        ...
 
     @abstractmethod
     def subscribe(self, topic: str, handler: Callable[[EventModel], Awaitable[None]]) -> None:
-        pass
+        """Registers an asynchronous event handler for a specific topic pattern."""
+        ...
 
     @abstractmethod
     def unsubscribe(self, topic: str, handler: Callable[[EventModel], Awaitable[None]]) -> None:
-        pass
+        """Removes an event handler subscription."""
+        ...
 
 class IService(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        pass
+        """Unique service identifier name."""
+        ...
 
     @abstractmethod
     async def start(self) -> None:
-        pass
+        """Initializes and starts the service lifecycle."""
+        ...
 
     @abstractmethod
     async def stop(self) -> None:
-        pass
+        """Stops the service cleanly during system shutdown."""
+        ...
 
     @abstractmethod
     async def health_check(self) -> bool:
-        pass
+        """Performs a health check returning True if operational."""
+        ...
 
 class ILLMProvider(ABC):
     @abstractmethod
     async def generate(self, prompt: str, system_prompt: Optional[str] = None, **kwargs) -> str:
-        pass
+        """Generates text from natural language prompt input."""
+        ...
 
     @abstractmethod
     async def generate_json(self, prompt: str, system_prompt: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        pass
+        """Generates structured JSON output validated against system directives."""
+        ...
 
 class ISTTProvider(ABC):
     @abstractmethod
     async def transcribe(self, audio_data: bytes, language: Optional[str] = None) -> str:
-        pass
+        """Transcribes raw audio bytes into text."""
+        ...
 
 class ITTSProvider(ABC):
     @abstractmethod
     async def synthesize(self, text: str, voice: Optional[str] = None, language: Optional[str] = None) -> bytes:
-        pass
+        """Synthesizes text into audio stream bytes."""
+        ...
 
 class ITool(ABC):
     @property
     @abstractmethod
     def metadata(self) -> ToolMetadata:
-        pass
+        """Returns tool metadata descriptor."""
+        ...
 
     @abstractmethod
     async def execute(self, request: ToolRequestModel) -> ToolResultModel:
-        pass
+        """Executes tool request asynchronously."""
+        ...
 
     @abstractmethod
     async def undo(self, request: ToolRequestModel) -> ToolResultModel:
-        pass
+        """Reverses previous tool execution."""
+        ...
 
 class ISkill(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        pass
+        """Unique skill name."""
+        ...
 
     @property
     @abstractmethod
     def capabilities(self) -> List[str]:
-        pass
+        """Exposed capabilities."""
+        ...
 
     @abstractmethod
     async def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        pass
+        """Executes skill workflow."""
+        ...
 
 class IPlugin(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        pass
+        """Plugin name."""
+        ...
 
     @property
     @abstractmethod
     def version(self) -> str:
-        pass
+        """Plugin version."""
+        ...
 
     @abstractmethod
     async def on_load(self, container: Any) -> None:
-        pass
+        """Plugin initialization lifecycle callback."""
+        ...
 
     @abstractmethod
     async def on_unload(self) -> None:
-        pass
+        """Plugin teardown lifecycle callback."""
+        ...

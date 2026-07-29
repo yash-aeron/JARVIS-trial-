@@ -6,7 +6,8 @@ from core.models import ToolMetadata
 class IRankingStrategy(ABC):
     @abstractmethod
     def rank(self, candidates: List[ITool], capability: str, context: Optional[Dict[str, Any]] = None) -> List[Tuple[ITool, float]]:
-        pass
+        """Ranks candidate tools based on capability match, context alignment, and strategy scoring."""
+        ...
 
 class ContextAwareRankingStrategy(IRankingStrategy):
     """Evaluates tool relevance against active runtime context (focused window/app)."""
