@@ -46,6 +46,15 @@ class SpotifyTool(ITool):
             result=obs.model_dump()
         )
 
+    async def undo(self, request: ToolRequestModel) -> ToolResultModel:
+        logger.info(f"[SpotifyTool] Undoing playback action for request '{request.request_id}'")
+        return ToolResultModel(
+            request_id=request.request_id,
+            correlation_id=request.correlation_id,
+            status="completed",
+            result={"status": "undone"}
+        )
+
 
 class SpotifyControlPlugin(BasePlugin):
     """Reference Spotify Playback Plugin implementing BasePlugin SDK."""
