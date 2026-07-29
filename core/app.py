@@ -153,6 +153,13 @@ class JARVISApp:
     async def initialize(self) -> None:
         service_mgr: ServiceManager = self.container.resolve(ServiceManager)
         await service_mgr.start_all()
+        
+        # Discover and load installed third-party plugins
+        plugin_mgr: PluginManager = self.container.resolve(PluginManager)
+        loaded = await plugin_mgr.discover_and_load_all()
+        if loaded:
+            logger.info(f"[JARVISApp] Discovered and loaded third-party plugins: {loaded}")
+            
         logger.info("JARVIS Subsystems online.")
 
     async def shutdown(self) -> None:

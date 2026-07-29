@@ -1,0 +1,9 @@
+{
+  "name": "sample_weather",
+  "version": "1.0.0",
+  "description": "Third-party weather forecasting & environmental info plugin for JARVIS",
+  "author": "Community Contributor",
+  "entry_point": "plugin:WeatherPlugin",
+  "dependencies": [],
+  "permissions": ["LOW"]
+}
