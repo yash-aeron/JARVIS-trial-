@@ -1,11 +1,15 @@
 import json
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Type, TypeVar
+from pydantic import BaseModel
 from core.interfaces import ILLMProvider
+from core.models import LLMExecutionPlanResponse, PlanStepModel
 from observability.logger import logger
 
+T = TypeVar("T", bound=BaseModel)
+
 class OllamaLLMProvider(ILLMProvider):
-    """Local LLM Provider using Ollama with automatic mock fallback if service is unavailable."""
+    """Local LLM Provider using Ollama with structured JSON schema validation."""
     
     def __init__(self, model_name: str = "qwen2.5-coder"):
         self.model_name = model_name
@@ -27,11 +31,12 @@ class OllamaLLMProvider(ILLMProvider):
     async def generate_json(self, prompt: str, system_prompt: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         text_resp = await self.generate(prompt, system_prompt=system_prompt, **kwargs)
         try:
-            # Simple JSON extraction regex/parser
             start = text_resp.find('{')
             end = text_resp.rfind('}') + 1
             if start != -1 and end != -1:
-                return json.loads(text_resp[start:end])
-        except Exception:
-            pass
+                parsed = json.loads(text_resp[start:end])
+                if isinstance(parsed, dict):
+                    return parsed
+        except Exception as e:
+            logger.warning(f"[OllamaLLMProvider] Error parsing JSON from text response: {e}")
         return {"response": text_resp, "status": "raw"}

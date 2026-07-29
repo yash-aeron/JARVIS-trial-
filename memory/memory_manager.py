@@ -1,12 +1,12 @@
 import sqlite3
 import os
 import time
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any
 from memory.schema import MemoryItemModel
 from observability.logger import logger
 
 class MemoryManager:
-    """Unified Memory Controller supporting retrieval ranking by tag matching, importance rating, and recency."""
+    """Unified Memory Controller supporting rich metadata persistence and semantic retrieval ranking."""
     
     def __init__(self, db_path: str = "data/memory.db"):
         self.db_path = db_path
@@ -24,8 +24,12 @@ class MemoryManager:
                     importance REAL,
                     project TEXT,
                     language TEXT,
+                    source TEXT,
+                    confidence REAL,
+                    access_count INTEGER,
+                    last_accessed REAL,
                     timestamp REAL,
-                    version TEXT
+                    embedding_version TEXT
                 )
             """)
             conn.commit()
@@ -36,11 +40,15 @@ class MemoryManager:
             cursor = conn.cursor()
             cursor.execute("""
                 INSERT OR REPLACE INTO memories 
-                (item_id, content, tags, importance, project, language, timestamp, version)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (item.item_id, item.content, tags_str, item.importance, item.project, item.language, item.timestamp, item.version))
+                (item_id, content, tags, importance, project, language, source, confidence, access_count, last_accessed, timestamp, embedding_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                item.item_id, item.content, tags_str, item.importance, 
+                item.project, item.language, item.source, item.confidence, 
+                item.access_count, item.last_accessed, item.timestamp, item.embedding_version
+            ))
             conn.commit()
-        logger.info(f"[MemoryManager] Stored memory '{item.item_id}' [Tags: {tags_str}]")
+        logger.info(f"[MemoryManager] Stored rich memory '{item.item_id}' [Tags: {tags_str}]")
         return item.item_id
 
     def query(self, tag: Optional[str] = None, project: Optional[str] = None, min_importance: float = 0.0) -> List[MemoryItemModel]:
@@ -48,9 +56,9 @@ class MemoryManager:
         return [item for item, score in ranked_results]
 
     def query_and_rank(self, query_tags: List[str] = None, project: Optional[str] = None, min_importance: float = 0.0) -> List[Tuple[MemoryItemModel, float]]:
-        """Ranks retrieved memories based on tag matches, importance score, and recency decay."""
+        """Semantic retrieval ranking algorithm combining tag match, importance, access count, and recency decay."""
         query_tags = query_tags or []
-        query_sql = "SELECT item_id, content, tags, importance, project, language, timestamp, version FROM memories WHERE importance >= ?"
+        query_sql = "SELECT item_id, content, tags, importance, project, language, source, confidence, access_count, last_accessed, timestamp, embedding_version FROM memories WHERE importance >= ?"
         params: List[Any] = [min_importance]
         
         if project:
@@ -69,18 +77,20 @@ class MemoryManager:
             item = MemoryItemModel(
                 item_id=r[0], content=r[1], tags=tags_list,
                 importance=r[3], project=r[4], language=r[5],
-                timestamp=r[6], version=r[7]
+                source=r[6], confidence=r[7], access_count=r[8],
+                last_accessed=r[9], timestamp=r[10], embedding_version=r[11]
             )
             
-            # Ranking formula: Tag match weight + Importance weight + Recency decay
             tag_matches = sum(1 for t in query_tags if t in tags_list)
             if query_tags and tag_matches == 0:
                 continue
                 
             age_hours = max(0.1, (now - item.timestamp) / 3600.0)
-            recency_score = 1.0 / (1.0 + (age_hours / 24.0))  # Half life 24 hours
+            recency_score = 1.0 / (1.0 + (age_hours / 24.0))  # 24 hour half-life
+            access_boost = min(1.5, 1.0 + (item.access_count * 0.05))
             
-            score = (tag_matches * 2.0) + (item.importance * 1.0) + (recency_score * 0.5)
+            # Semantic ranking score formula
+            score = (tag_matches * 2.5) + (item.importance * 1.2) + (item.confidence * 1.0) + (recency_score * 0.8) * access_boost
             scored_items.append((item, score))
             
         scored_items.sort(key=lambda x: x[1], reverse=True)

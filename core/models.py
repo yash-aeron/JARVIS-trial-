@@ -1,9 +1,20 @@
 import uuid
+import time
+from enum import Enum
 from typing import Dict, Any, List, Optional, Generic, TypeVar
 from pydantic import BaseModel, Field
 from datetime import datetime
 
 TPayload = TypeVar("TPayload", bound=BaseModel)
+
+class ServiceState(str, Enum):
+    NEW = "NEW"
+    STARTING = "STARTING"
+    RUNNING = "RUNNING"
+    DEGRADED = "DEGRADED"
+    STOPPING = "STOPPING"
+    STOPPED = "STOPPED"
+    FAILED = "FAILED"
 
 class ToolMetadata(BaseModel):
     name: str
@@ -44,6 +55,22 @@ class ExecutionPlanModel(BaseModel):
     user_goal: str
     steps: List[PlanStepModel] = Field(default_factory=list)
     version: str = "1.0.0"
+
+class LLMExecutionPlanResponse(BaseModel):
+    user_goal: str
+    steps: List[PlanStepModel] = Field(default_factory=list)
+
+class ActionItemModel(BaseModel):
+    item_id: str
+    correlation_id: str
+    capability: str
+    args: Dict[str, Any] = Field(default_factory=dict)
+    state: str = "PENDING"  # PENDING, RUNNING, PAUSED, FAILED, COMPLETED
+    priority: int = 1  # 1 = Normal, 5 = High, 10 = Critical
+    progress_percent: float = 0.0
+    eta_sec: Optional[float] = None
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
 
 # Dedicated Pydantic Event Payloads
 class ToolStartedEventData(BaseModel):
@@ -98,5 +125,4 @@ class EventModel(BaseModel):
 
     @property
     def data(self) -> Dict[str, Any]:
-        """Backward compatibility dictionary accessor."""
         return self.payload.model_dump()

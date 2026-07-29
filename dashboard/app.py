@@ -19,7 +19,7 @@ from core.event_bus import AsyncEventBus
 
 if PYSIDE6_AVAILABLE:
     class JARVISDashboard(QMainWindow):
-        """Modern Dark Glassmorphic PySide6 GUI Dashboard for JARVIS AI OS Assistant."""
+        """Modern Dark Glassmorphic PySide6 GUI Dashboard visualizing live request pipelines."""
         
         def __init__(self, state_manager: StateManager, event_bus: AsyncEventBus):
             super().__init__()
@@ -27,7 +27,7 @@ if PYSIDE6_AVAILABLE:
             self.event_bus = event_bus
             self.system_monitor = SystemMonitor()
             
-            self.setWindowTitle("JARVIS - AI Operating System Assistant Dashboard v1.0")
+            self.setWindowTitle("JARVIS - AI Operating System Assistant Live Event Dashboard v1.0")
             self.resize(1200, 800)
             self.setStyleSheet("""
                 QMainWindow { background-color: #0b0f19; color: #e2e8f0; }
@@ -84,17 +84,16 @@ if PYSIDE6_AVAILABLE:
             left_layout.addWidget(metrics_box)
             
             # Subsystem Dependency Graph Box
-            deps_box = QGroupBox("Subsystem Dependency Graph Status")
+            deps_box = QGroupBox("Live Subsystem Pipeline Monitor")
             deps_layout = QVBoxLayout(deps_box)
             self.lst_deps = QListWidget()
             self.lst_deps.addItems([
-                "✔ EventBus [Online - Event Sourcing Active]",
-                "✔ StateManager [Active - IDLE]",
-                "✔ ServiceManager [All Services Healthy]",
-                "✔ SpeechManager [VAD / STT / TTS Ready]",
-                "✔ ExecutiveAgent [Decision Engine Ready]",
-                "✔ ToolRegistry [Capability Discovery Active]",
-                "✔ MemoryManager [SQLite / ChromaDB Ready]"
+                "1. SpeechRecognized ──► [Input Transcribed]",
+                "2. IntentDetected   ──► [Executive Decision]",
+                "3. PlanCreated      ──► [LLM Capability Steps]",
+                "4. ToolStarted      ──► [Subprocess Spawned]",
+                "5. ToolFinished     ──► [Result Collected]",
+                "6. SpeechSpoke      ──► [TTS Synthesized]"
             ])
             deps_layout.addWidget(self.lst_deps)
             left_layout.addWidget(deps_box)
@@ -104,7 +103,7 @@ if PYSIDE6_AVAILABLE:
             right_layout = QVBoxLayout(right_widget)
             
             # Event Timeline Box
-            timeline_box = QGroupBox("Live Event Sourcing Timeline")
+            timeline_box = QGroupBox("Live Event Sourcing Timeline (SQLite Persisted)")
             timeline_layout = QVBoxLayout(timeline_box)
             self.txt_timeline = QTextEdit()
             self.txt_timeline.setReadOnly(True)
@@ -112,7 +111,7 @@ if PYSIDE6_AVAILABLE:
             right_layout.addWidget(timeline_box)
             
             # Conversation & Reasoning Stream Box
-            reasoning_box = QGroupBox("Thought Stream & Plan Execution Monitor")
+            reasoning_box = QGroupBox("Thought Stream & Execution Monitor")
             reasoning_layout = QVBoxLayout(reasoning_box)
             self.txt_reasoning = QTextEdit()
             self.txt_reasoning.setReadOnly(True)
@@ -136,10 +135,10 @@ if PYSIDE6_AVAILABLE:
             self.pbar_ram.setValue(int(stats["ram_percent"]))
             self.pbar_disk.setValue(int(stats["disk_percent"]))
             
-            events = self.event_bus.get_event_history(limit=5)
+            events = self.event_bus.get_event_history(limit=8)
             self.txt_timeline.clear()
             for ev in events:
-                self.txt_timeline.append(f"[{ev.sender}] ({ev.topic}) CID={ev.correlation_id[:8]}: {ev.data}")
+                self.txt_timeline.append(f"[{ev.sender}] ({ev.topic}) [CID: {ev.correlation_id[:8]}]: {ev.data}")
 
 def run_dashboard(state_manager: StateManager, event_bus: AsyncEventBus):
     if not PYSIDE6_AVAILABLE:
