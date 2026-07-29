@@ -165,6 +165,14 @@ class JARVISApp:
         self.container = container or bootstrap_container()
         self.container.register_singleton(JARVISApp, self)
 
+    @property
+    def state_manager(self) -> StateManager:
+        return self.container.resolve(StateManager)
+
+    @property
+    def event_bus(self) -> IEventBus:
+        return self.container.resolve(IEventBus)
+
     async def initialize(self) -> None:
         service_mgr: ServiceManager = self.container.resolve(ServiceManager)
         await service_mgr.start_all()

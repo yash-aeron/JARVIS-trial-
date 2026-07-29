@@ -245,18 +245,22 @@ if PYSIDE6_AVAILABLE:
                 if topic_filter and topic_filter not in ev.topic.lower():
                     continue
 
+                payload_data = getattr(ev.payload, "data", ev.payload.model_dump() if hasattr(ev.payload, "model_dump") else str(ev.payload))
+                if not isinstance(payload_data, dict):
+                    payload_data = {"info": str(payload_data)}
+
                 if ev.topic == "tool.started":
-                    tool_name = ev.payload.data.get("tool_name", "Executing...")
+                    tool_name = payload_data.get("tool_name", "Executing...")
                     self.lbl_active_tool.setText(f"ACTIVE TOOL: {tool_name}")
                 elif ev.topic == "tool.finished":
                     self.lbl_active_tool.setText("ACTIVE TOOL: Idle")
 
                 # If plan created, update execution graph table
                 if ev.topic == "plan.created":
-                    self._update_execution_graph(ev.payload.data)
+                    self._update_execution_graph(payload_data)
 
                 topic_tag = f"[{ev.topic.upper()}]"
-                self.txt_timeline.append(f"{topic_tag} ({ev.sender}) [CID: {ev.correlation_id[:8]}]: {ev.payload.data}")
+                self.txt_timeline.append(f"{topic_tag} ({ev.sender}) [CID: {ev.correlation_id[:8]}]: {payload_data}")
 
         # ── Execution Graph Table Updater ─────────────────────────────────────
         def _update_execution_graph(self, plan_data: Dict[str, Any]):
