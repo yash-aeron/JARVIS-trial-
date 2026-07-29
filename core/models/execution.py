@@ -21,6 +21,7 @@ class ExecutionContextModel(BaseModel):
     clipboard_content: str = ""
     screen_resolution: str = "1920x1080"
     active_mode: str = "Developer"
+    vision_observation: Optional[Dict[str, Any]] = None
 
 class ActionItemModel(BaseModel):
     item_id: str

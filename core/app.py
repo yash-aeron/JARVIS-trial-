@@ -114,6 +114,9 @@ def _register_automation(container: DependencyContainer) -> None:
     tool_reg.register(ApplicationLauncherTool())
     tool_reg.register(ContextReaderTool(context_manager=context_mgr))
     tool_reg.register(MemoryManagementTool(memory_manager=memory_mgr))
+
+    from vision.vision_service import ScreenshotCaptureTool
+    tool_reg.register(ScreenshotCaptureTool())
     container.register_singleton(ToolRegistry, tool_reg)
 
     container.register_singleton(UndoManager, UndoManager())
