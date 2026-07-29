@@ -42,7 +42,6 @@ if PYSIDE6_AVAILABLE:
             
             self._init_ui()
             
-            # System update timer
             self.timer = QTimer(self)
             self.timer.timeout.connect(self._update_metrics)
             self.timer.start(1000)
@@ -127,24 +126,20 @@ if PYSIDE6_AVAILABLE:
             main_layout.addWidget(splitter)
             self.setCentralWidget(main_widget)
             
-            # Log initial event
             self.txt_timeline.append("[SYSTEM INIT]: JARVIS Dashboard Online. All Subsystems Operational.")
 
         def _update_metrics(self):
-            # Update State
             self.lbl_state.setText(f"CURRENT STATE: {self.state_manager.current_state.name}")
             
-            # Update Hardware Stats
             stats = self.system_monitor.get_stats()
             self.pbar_cpu.setValue(int(stats["cpu_percent"]))
             self.pbar_ram.setValue(int(stats["ram_percent"]))
             self.pbar_disk.setValue(int(stats["disk_percent"]))
             
-            # Refresh Event Timeline
             events = self.event_bus.get_event_history(limit=5)
             self.txt_timeline.clear()
             for ev in events:
-                self.txt_timeline.append(f"[{ev.sender}] ({ev.topic}): {ev.data}")
+                self.txt_timeline.append(f"[{ev.sender}] ({ev.topic}) CID={ev.correlation_id[:8]}: {ev.data}")
 
 def run_dashboard(state_manager: StateManager, event_bus: AsyncEventBus):
     if not PYSIDE6_AVAILABLE:

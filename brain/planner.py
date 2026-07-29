@@ -4,7 +4,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
 from core.interfaces import ILLMProvider, IEventBus
-from core.models import EventModel
+from core.models import EventModel, PlanCreatedEventData
 from state.state_manager import StateManager
 from state.states import AssistantState
 from prompts.prompt_manager import PromptManager
@@ -26,7 +26,7 @@ class ExecutionPlanModel(BaseModel):
     version: str = "1.0.0"
 
 class Planner:
-    """Multi-Step Planner generating capability-based ExecutionPlanModel via structured LLM prompting."""
+    """Multi-Step LLM-First Planner emitting typed PlanCreatedEventData payloads."""
     
     def __init__(self, llm: ILLMProvider, state_manager: StateManager, event_bus: Optional[IEventBus] = None):
         self.llm = llm
@@ -36,12 +36,11 @@ class Planner:
 
     async def create_plan(self, goal: str, capabilities_needed: List[str], correlation_id: str) -> ExecutionPlanModel:
         self.state_manager.set_state(AssistantState.PLANNING, f"Creating execution plan for: {goal}", correlation_id=correlation_id)
-        logger.info(f"Generating capability-based plan [CID: {correlation_id}] for goal: '{goal}'")
+        logger.info(f"Generating LLM-first plan [CID: {correlation_id}] for goal: '{goal}'")
         
-        # 1. Fetch Markdown prompt via PromptManager
         prompt_text = self.prompt_manager.get("planner", goal=goal, capabilities=", ".join(capabilities_needed))
         
-        # 2. Call LLM for structured JSON planning
+        # Primary Path: LLM JSON Generation
         llm_json = await self.llm.generate_json(prompt=prompt_text, system_prompt="Output strict JSON execution plans.")
         
         steps: List[PlanStepModel] = []
@@ -58,42 +57,53 @@ class Planner:
                 except Exception:
                     pass
 
-        # Fallback parsing if LLM JSON is initializing or absent
+        # Fallback Plan Generation if LLM service is offline/initializing
         if not steps:
-            goal_lower = goal.lower()
-            if any(w in goal_lower for w in ["open", "launch", "kholo", "run", "start"]):
-                app_target = goal_lower
-                for prefix in ["open", "launch", "kholo", "run", "start", "jarvis"]:
-                    app_target = app_target.replace(prefix, "").strip()
-                if not app_target:
-                    app_target = "notepad"
-                    
-                steps.append(PlanStepModel(
-                    step_id=1,
-                    capability="open_application",
-                    args={"app_name": app_target},
-                    expected_observation=f"Application '{app_target}' launched",
-                    depends_on=[]
-                ))
-            else:
-                steps.append(PlanStepModel(
-                    step_id=1,
-                    capability="system_control",
-                    args={"action": "get_status"},
-                    expected_observation="System status verified",
-                    depends_on=[]
-                ))
+            steps = self._fallback_plan(goal)
 
         plan = ExecutionPlanModel(correlation_id=correlation_id, user_goal=goal, steps=steps)
         
         if self.event_bus:
+            payload = PlanCreatedEventData(
+                plan_id=plan.plan_id,
+                correlation_id=correlation_id,
+                total_steps=len(steps),
+                user_goal=goal
+            )
             await self.event_bus.publish(
                 EventModel(
                     correlation_id=correlation_id,
                     topic="plan.created",
-                    data={"plan": plan.model_dump()},
+                    data=payload.model_dump(),
                     sender="Planner"
                 )
             )
             
         return plan
+
+    def _fallback_plan(self, goal: str) -> List[PlanStepModel]:
+        steps = []
+        goal_lower = goal.lower()
+        if any(w in goal_lower for w in ["open", "launch", "kholo", "run", "start"]):
+            app_target = goal_lower
+            for prefix in ["open", "launch", "kholo", "run", "start", "jarvis"]:
+                app_target = app_target.replace(prefix, "").strip()
+            if not app_target:
+                app_target = "notepad"
+                
+            steps.append(PlanStepModel(
+                step_id=1,
+                capability="open_application",
+                args={"app_name": app_target},
+                expected_observation=f"Application '{app_target}' launched",
+                depends_on=[]
+            ))
+        else:
+            steps.append(PlanStepModel(
+                step_id=1,
+                capability="system_control",
+                args={"action": "get_status"},
+                expected_observation="System status verified",
+                depends_on=[]
+            ))
+        return steps

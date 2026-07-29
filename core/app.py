@@ -34,83 +34,88 @@ from system.mode_manager import ModeManager
 from plugins.plugin_manager import PluginManager
 from observability.logger import logger
 
-class JARVISApp:
-    """Master Application Orchestrator built on Type-Based Dependency Injection."""
+def bootstrap_container() -> DependencyContainer:
+    """Builds and wires the full dependency graph inside DependencyContainer."""
+    container = DependencyContainer()
     
-    def __init__(self):
-        logger.info("Initializing JARVIS AI Operating System Assistant via Type-Based Dependency Injection...")
-        
-        self.container = DependencyContainer()
-        
-        # 1. Register Core Singletons using Interface/Type Keys
-        self.settings = Settings()
-        self.event_bus = AsyncEventBus()
-        self.state_manager = StateManager(self.event_bus)
-        self.service_manager = ServiceManager()
-        
-        self.container.register_singleton(Settings, self.settings)
-        self.container.register_singleton(IEventBus, self.event_bus)
-        self.container.register_singleton(StateManager, self.state_manager)
-        self.container.register_singleton(ServiceManager, self.service_manager)
-        
-        # 2. Register Speech & Language Services
-        self.language_manager = LanguageManager(self.settings)
-        self.stt_provider = WhisperSTTProvider()
-        self.tts_provider = EdgeTTSProvider()
-        self.speech_manager = SpeechManager(
-            stt=self.stt_provider,
-            tts=self.tts_provider,
-            language_manager=self.language_manager,
-            state_manager=self.state_manager,
-            event_bus=self.event_bus
-        )
-        
-        self.container.register_singleton(LanguageManager, self.language_manager)
-        self.container.register_singleton(SpeechManager, self.speech_manager)
-        self.service_manager.register_service(self.speech_manager)
-        
-        # 3. Register Brain & Intelligence Services
-        self.llm_provider = OllamaLLMProvider()
-        self.intent_engine = IntentEngine(self.llm_provider)
-        self.executive_agent = ExecutiveAgent(self.intent_engine, self.state_manager, self.event_bus)
-        self.planner = Planner(self.llm_provider, self.state_manager, self.event_bus)
-        
-        self.container.register_singleton(ILLMProvider, self.llm_provider)
-        self.container.register_singleton(IntentEngine, self.intent_engine)
-        self.container.register_singleton(ExecutiveAgent, self.executive_agent)
-        self.container.register_singleton(Planner, self.planner)
-        
-        # 4. Register Tool & Automation Systems
-        self.tool_registry = ToolRegistry()
-        self.tool_registry.register(SystemControlTool())
-        self.tool_registry.register(ApplicationLauncherTool())
-        
-        self.undo_manager = UndoManager()
-        self.executor = PlanExecutor(
-            tool_registry=self.tool_registry,
-            undo_manager=self.undo_manager,
-            state_manager=self.state_manager,
-            event_bus=self.event_bus
-        )
-        self.skill_engine = SkillEngine(self.tool_registry)
-        
-        self.container.register_singleton(ToolRegistry, self.tool_registry)
-        self.container.register_singleton(UndoManager, self.undo_manager)
-        self.container.register_singleton(PlanExecutor, self.executor)
-        self.container.register_singleton(SkillEngine, self.skill_engine)
-        
-        # 5. Register Memory, Context & Auxiliary Systems
-        self.memory_manager = MemoryManager()
-        self.context_manager = ContextManager()
-        self.session_manager = SessionManager()
-        self.mode_manager = ModeManager(initial_mode="Developer")
-        self.plugin_manager = PluginManager(self.container)
-        
-        self.container.register_singleton(MemoryManager, self.memory_manager)
-        self.container.register_singleton(ContextManager, self.context_manager)
-        self.container.register_singleton(SessionManager, self.session_manager)
-        self.container.register_singleton(ModeManager, self.mode_manager)
-        self.container.register_singleton(PluginManager, self.plugin_manager)
+    # Core Infrastructure Factories & Singletons
+    settings = Settings()
+    event_bus = AsyncEventBus()
+    state_manager = StateManager(event_bus)
+    service_manager = ServiceManager()
+    
+    container.register_singleton(Settings, settings)
+    container.register_singleton(IEventBus, event_bus)
+    container.register_singleton(StateManager, state_manager)
+    container.register_singleton(ServiceManager, service_manager)
+    
+    # Language & Speech
+    language_manager = LanguageManager(settings)
+    stt_provider = WhisperSTTProvider()
+    tts_provider = EdgeTTSProvider()
+    speech_manager = SpeechManager(
+        stt=stt_provider,
+        tts=tts_provider,
+        language_manager=language_manager,
+        state_manager=state_manager,
+        event_bus=event_bus
+    )
+    container.register_singleton(LanguageManager, language_manager)
+    container.register_singleton(SpeechManager, speech_manager)
+    service_manager.register_service(speech_manager)
+    
+    # Intelligence & Executive Agent
+    llm_provider = OllamaLLMProvider()
+    intent_engine = IntentEngine(llm_provider)
+    executive_agent = ExecutiveAgent(intent_engine, state_manager, event_bus)
+    planner = Planner(llm_provider, state_manager, event_bus)
+    
+    container.register_singleton(ILLMProvider, llm_provider)
+    container.register_singleton(IntentEngine, intent_engine)
+    container.register_singleton(ExecutiveAgent, executive_agent)
+    container.register_singleton(Planner, planner)
+    
+    # Tools, Skills & Automation
+    tool_registry = ToolRegistry()
+    tool_registry.register(SystemControlTool())
+    tool_registry.register(ApplicationLauncherTool())
+    
+    undo_manager = UndoManager()
+    executor = PlanExecutor(
+        tool_registry=tool_registry,
+        undo_manager=undo_manager,
+        state_manager=state_manager,
+        event_bus=event_bus
+    )
+    skill_engine = SkillEngine(tool_registry)
+    
+    container.register_singleton(ToolRegistry, tool_registry)
+    container.register_singleton(UndoManager, undo_manager)
+    container.register_singleton(PlanExecutor, executor)
+    container.register_singleton(SkillEngine, skill_engine)
+    
+    # Auxiliary & Management Systems
+    memory_manager = MemoryManager()
+    context_manager = ContextManager()
+    session_manager = SessionManager()
+    mode_manager = ModeManager(initial_mode="Developer")
+    plugin_manager = PluginManager(container)
+    
+    container.register_singleton(MemoryManager, memory_manager)
+    container.register_singleton(ContextManager, context_manager)
+    container.register_singleton(SessionManager, session_manager)
+    container.register_singleton(ModeManager, mode_manager)
+    container.register_singleton(PluginManager, plugin_manager)
+    
+    return container
+
+class JARVISApp:
+    """Master Application Orchestrator resolved directly from DependencyContainer."""
+    
+    def __init__(self, container: Optional[DependencyContainer] = None):
+        logger.info("Initializing JARVIS AI Operating System Assistant from DI Container...")
+        self.container = container or bootstrap_container()
+        self.container.register_singleton(JARVISApp, self)
 
     async def initialize(self) -> None:
         service_mgr: ServiceManager = self.container.resolve(ServiceManager)
@@ -126,11 +131,12 @@ class JARVISApp:
         cid = correlation_id or str(uuid.uuid4())
         logger.info(f"[USER COMMAND] [CID: {cid}]: '{utterance}'")
         
-        # Resolve dependencies via type/interface keys
         exec_agent: ExecutiveAgent = self.container.resolve(ExecutiveAgent)
         planner: Planner = self.container.resolve(Planner)
         executor: PlanExecutor = self.container.resolve(PlanExecutor)
         speech_mgr: SpeechManager = self.container.resolve(SpeechManager)
+        state_mgr: StateManager = self.container.resolve(StateManager)
+        context_mgr: ContextManager = self.container.resolve(ContextManager)
         
         # Step 1: Executive Agent Processing
         executive_res = await exec_agent.process(utterance, correlation_id=cid)
@@ -140,18 +146,19 @@ class JARVISApp:
         results = []
         if decision.needs_clarification:
             response = decision.clarification_prompt or "Could you please clarify your request?"
-            self.state_manager.set_state(AssistantState.IDLE, "Clarification requested", correlation_id=cid)
+            state_mgr.set_state(AssistantState.IDLE, "Clarification requested", correlation_id=cid)
         elif decision.needs_planning or intent.capabilities_needed:
             # Step 2: Capability Planning
             plan: ExecutionPlanModel = await planner.create_plan(utterance, intent.capabilities_needed, correlation_id=cid)
             
-            # Step 3: Execution via Action Queue with Retries & Tool Ranking
-            tool_results = await executor.execute_plan(plan)
+            # Step 3: Parallel Execution via Action Queue with Runtime Context & Retries
+            runtime_context = context_mgr.get_snapshot().model_dump()
+            tool_results = await executor.execute_plan(plan, context=runtime_context)
             results = [tr.model_dump() for tr in tool_results]
             response = f"Sir, I have executed your request for '{utterance}'."
         else:
             response = f"Sir, I am online and listening: '{utterance}'."
-            self.state_manager.set_state(AssistantState.IDLE, "Response generated", correlation_id=cid)
+            state_mgr.set_state(AssistantState.IDLE, "Response generated", correlation_id=cid)
             
         # Step 4: Speech Synthesis & Output
         await speech_mgr.speak(response, correlation_id=cid)

@@ -1,5 +1,5 @@
 import uuid
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -19,11 +19,12 @@ class ToolRequestModel(BaseModel):
     args: Dict[str, Any] = Field(default_factory=dict)
     timeout_sec: float = 10.0
     max_retries: int = 2
+    is_cancelled: bool = False
 
 class ToolResultModel(BaseModel):
     request_id: str
     correlation_id: str
-    status: str  # "completed", "failed", "undone"
+    status: str  # "completed", "failed", "undone", "cancelled"
     result: Dict[str, Any] = Field(default_factory=dict)
     error: Optional[str] = None
 
@@ -35,7 +36,7 @@ class EventModel(BaseModel):
     timestamp: float = Field(default_factory=lambda: datetime.now().timestamp())
     data: Dict[str, Any] = Field(default_factory=dict)
 
-# Strongly-Typed Event Payloads
+# Dedicated Pydantic Event Payloads
 class ToolStartedEventData(BaseModel):
     step_id: int
     capability: str
@@ -61,3 +62,15 @@ class StateChangedEventData(BaseModel):
     old_state: str
     new_state: str
     reason: str
+
+class IntentDetectedEventData(BaseModel):
+    utterance: str
+    intent_category: str
+    confidence: float
+    risk_level: str
+
+class PlanCreatedEventData(BaseModel):
+    plan_id: str
+    correlation_id: str
+    total_steps: int
+    user_goal: str

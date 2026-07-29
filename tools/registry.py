@@ -4,7 +4,7 @@ from core.models import ToolMetadata
 from observability.logger import logger
 
 class ToolRegistry:
-    """Registry managing strongly-typed tools with ranked Capability Discovery scoring."""
+    """Registry managing tools with runtime Context-Aware Capability Scorer."""
     
     def __init__(self):
         self._tools: Dict[str, ITool] = {}
@@ -29,23 +29,28 @@ class ToolRegistry:
         return self._capabilities_map.get(capability, [])
 
     def find_and_rank_by_capability(self, capability: str, context: Optional[Dict[str, Any]] = None) -> List[Tuple[ITool, float]]:
-        """Ranks candidate tools for a capability by matching score, permission suitability, and specialization."""
+        """Ranks tools using capability specialization, permission level, and runtime context (e.g. focused app)."""
         candidates = self._capabilities_map.get(capability, [])
         scored_candidates: List[Tuple[ITool, float]] = []
         
+        focused_app = (context or {}).get("focused_app", "").lower()
+        active_mode = (context or {}).get("active_mode", "Developer").lower()
+        
         for tool in candidates:
-            score = 0.5  # Base candidate score
+            score = 0.50  # Base candidate score
             meta = tool.metadata
             
-            # Exact primary capability specialization bonus
+            # Primary capability bonus
             if meta.capabilities and meta.capabilities[0] == capability:
-                score += 0.3
+                score += 0.25
                 
-            # Permission score adjustment (LOW/MEDIUM preferred for safety)
-            if meta.permission_level in ["LOW", "MEDIUM"]:
+            # Runtime context bonus (if focused app matches tool description or capability)
+            if focused_app and (focused_app in meta.name.lower() or focused_app in meta.description.lower()):
                 score += 0.15
-            elif meta.permission_level == "HIGH":
-                score += 0.05
+                
+            # Permission suitability
+            if meta.permission_level in ["LOW", "MEDIUM"]:
+                score += 0.10
                 
             scored_candidates.append((tool, min(1.0, score)))
             
