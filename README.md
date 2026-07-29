@@ -7,15 +7,16 @@ JARVIS is an event-driven, modular AI Operating System Assistant designed for pr
 ## Key Features
 
 - **Local-First Architecture**: Prioritizes local processing using models such as Ollama, Whisper, ChromaDB, and local TTS, ensuring data privacy and low execution latency.
-- **Type-Based & Config-Driven DI**: Registers and resolves singletons and factories using strict Class and Interface types (`container.resolve(ISTTProvider)`). Providers (`ISTTProvider`, `ITTSProvider`, `ILLMProvider`) are selected dynamically based on active configuration profiles.
-- **Strongly-Typed Persistent Event Sourcing**: Asynchronous communications powered by `AsyncEventBus` with unified Correlation IDs. Every system event carries a strongly-typed Pydantic payload (`EventModel.payload`) and is persisted to a local SQLite Event Store (`data/event_store.db`) for black-box session replay.
-- **Decoupled LLM-First Planner**: Generates capability-based plans from structured LLM JSON outputs. Prompt management is injected via DI (`PromptManager`), schema validation enforced by `PlanValidator` (verifying step IDs, dependency references, and registered capabilities), and offline steps handled by `FallbackPlanner`.
-- **Dependency-Aware Parallel Execution**: Analyzes step dependencies (`depends_on`) and executes independent tasks concurrently via `asyncio.gather(*tasks)` through `PlanExecutor` and `ActionQueue`.
-- **Pluggable Context-Aware Tool Scorer**: `ToolRegistry` uses an `IRankingStrategy` to evaluate capability specialization, permission level, runtime context (Windows foreground window & clipboard), and execution speed.
+- **Type-Based & Modular DI Bootstrapping**: Registers and resolves dependencies using strict Class and Interface types (`container.resolve(ISTTProvider)`). Registration is modularized into foundation, speech, brain, automation, memory, and plugin layers.
+- **Circuit Breakers & Service Lifecycle**: Subsystems implement explicit lifecycle states (`NEW`, `STARTING`, `RUNNING`, `DEGRADED`, `STOPPING`, `STOPPED`, `FAILED`). `CircuitBreaker` tracks consecutive failures and cooldown timers to prevent continuous retries on degraded services.
+- **Middleware-Enabled Event Bus & Replay**: Powered by `AsyncEventBus` with unified Correlation IDs, middleware chains (`add_middleware()`), automatic SQLite persistence (`data/event_store.db`), and session event replay (`replay_events()`).
+- **Decoupled LLM-First Planner**: Generates capability-based plans from structured LLM JSON outputs. Injects `PromptManager`, `PlanValidator` (verifying step IDs, dependency references, and registered capabilities), and `FallbackPlanner` via DI.
+- **Priority Action Queue & Parallel Execution**: `ActionQueue` uses `heapq` priority sorting, cancellation, pause/resume, and progress/ETA tracking. `PlanExecutor` executes independent tasks concurrently via `asyncio.gather(*tasks)`.
+- **Composite Tool Ranking Strategy**: `ToolRegistry` uses a `CompositeRankingStrategy` evaluating capability specialization, runtime context (Windows foreground window & clipboard), permission level, performance speed, and historical success rate.
 - **Native Process Control & App Focus**: `ApplicationLauncherTool` detects running processes (`psutil`), bringing existing application windows to the foreground or spawning new native subprocesses.
 - **Guarded State Machine**: `StateManager` enforces valid finite state transitions (`transition_to`), raising `StateTransitionError` on invalid state jumps.
+- **System Observability & Latency Metrics**: Structured logging with correlation IDs and `MetricsCollector` tracking latencies across planner, tool, memory retrieval, speech, and event bus operations.
 - **Flexible UI & Interfaces**: Supports interactive CLI terminal execution, a PySide6 Desktop GUI dashboard, and automated headless benchmarking suites.
-- **Plugin & MCP Integration**: Extensible architecture supporting dynamic plugin discovery, Model Context Protocol (MCP) tool adapters, and capability registration via `ToolRegistry`.
 
 ---
 
@@ -41,7 +42,7 @@ User Input (Voice / Text)
                   Planner (PromptManager ──► LLM JSON ──► PlanValidator)
                      │
                      ▼
-            PlanExecutor (Parallel Execution & Ranked Tools) ──► ActionQueue ──► ToolRegistry
+            PlanExecutor (Parallel Execution & Composite Ranking) ──► ActionQueue ──► ToolRegistry
 ```
 
 ---
@@ -51,29 +52,29 @@ User Input (Voice / Text)
 ```text
 JARVIS/
 ├── agent/            Executive agent and decision engine components
-├── automation/       Action queue, parallel plan executor, and undo management
+├── automation/       Action queue (heapq priority), parallel plan executor, and undo management
 ├── benchmark/        Automated performance benchmarking suite
 ├── brain/            Intent identification, LLM-first planner, plan validator, and fallback planner
 ├── config/           System configuration parameters and environment profiles
 ├── context/          Windows API context manager (active window title, clipboard, mode)
-├── core/             Application container, interfaces, models, event bus, and service registry
-├── dashboard/        PySide6 desktop graphical interface
+├── core/             Application container, interfaces, models, event bus (middleware/replay), and service registry
+├── dashboard/        PySide6 desktop graphical interface (live event pipeline visualizer)
 ├── evaluation/       Tool selection accuracy and plan optimality evaluators
 ├── language/         Code-switching language identification and localization management
 ├── mcp/              Model Context Protocol adapters and tool registries
-├── memory/           Tagged vector memory storage, SQLite schema, and retrieval ranking
-├── models/           Abstractions for LLMs, STT, and TTS engines
-├── observability/    Structured logger, metrics collection, tracing, and diagnostics
+├── memory/           Rich vector memory schema, SQLite persistence, and multi-factor ranking
+├── models/           Abstractions for LLMs, STT (streaming & interruptible), and TTS engines
+├── observability/    Structured logger, metrics collection (latencies), tracing, and diagnostics
 ├── plugins/          Plugin SDK and runtime plugin loading system
 ├── prompts/          PromptManager and Markdown prompt templates
-├── resource/         GPU allocation and system hardware resource management
+├── resource/         GPU allocation (RTX 3050 Ti VRAM management) and system hardware resources
 ├── session/          Session history and state retention
 ├── skills/           Skill discovery engine and execution routines
 ├── speech/           Voice activity detection, speech recognition, and speech synthesis
 ├── state/            Guarded finite state machine and transition table
 ├── system/           System resource monitoring and runtime profile selection
-├── tests/            Pytest unit and integration test suite
-├── tools/            System tools, process launcher, and pluggable ranking strategy
+├── tests/            Pytest unit, integration, and multi-step scenario test suite
+├── tools/            System tools, process launcher, and composite ranking strategy
 ├── main.py           Application entry point and CLI bootloader
 ├── requirements.txt  Python project dependencies
 ├── ARCHITECTURE.md   Technical design and component interaction documentation
@@ -91,7 +92,7 @@ JARVIS/
 - **Python**: Version 3.10 or higher
 - **Ollama**: Running locally with a compatible LLM model (e.g., `qwen2.5-coder`, `llama3`, or `mistral`)
 - **System Memory**: 8 GB RAM minimum (16 GB recommended for local LLM execution)
-- **Optional**: NVIDIA GPU with CUDA support for accelerated local inference
+- **Optional**: NVIDIA GPU with CUDA support for accelerated local inference (optimized for RTX 3050 Ti)
 
 ---
 
