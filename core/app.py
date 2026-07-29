@@ -7,10 +7,11 @@ from core.container import DependencyContainer
 from core.event_bus import AsyncEventBus
 from core.service_manager import ServiceManager
 from core.interfaces import IEventBus, IService, ILLMProvider, ISTTProvider, ITTSProvider, ITool, ISkill, IPlugin
-from core.models import EventModel
+from core.models import EventModel, ExecutionPlanModel, PlanCreatedEventData
 from state.state_manager import StateManager
 from state.states import AssistantState
 from language.manager import LanguageManager
+from prompts.prompt_manager import PromptManager
 
 from models.llm import OllamaLLMProvider
 from models.stt import WhisperSTTProvider
@@ -18,7 +19,7 @@ from models.tts import EdgeTTSProvider
 from speech.speech_manager import SpeechManager
 
 from brain.intent_engine import IntentEngine, IntentResultModel
-from brain.planner import Planner, ExecutionPlanModel
+from brain.planner import Planner
 from agent.executive import ExecutiveAgent, AgentDecisionModel
 
 from tools.registry import ToolRegistry
@@ -35,34 +36,50 @@ from plugins.plugin_manager import PluginManager
 from observability.logger import logger
 
 def bootstrap_container() -> DependencyContainer:
-    """Builds and wires the full dependency graph inside DependencyContainer using Factory Registration."""
+    """Builds and wires the full dependency graph inside DependencyContainer via Config-Driven Provider Factories."""
     container = DependencyContainer()
     
-    # 1. Register Core Singletons & Factories
-    container.register_singleton(Settings, Settings())
-    container.register_factory(IEventBus, lambda c: AsyncEventBus())
+    # 1. Register Core Infrastructure Singletons & Factories
+    settings = Settings()
+    event_bus = AsyncEventBus()
+    state_manager = StateManager(event_bus)
+    service_manager = ServiceManager()
+    prompt_manager = PromptManager()
     
-    # Enable shared event bus
-    shared_bus = container.resolve(IEventBus)
-    container.register_singleton(StateManager, StateManager(shared_bus))
-    container.register_singleton(ServiceManager, ServiceManager())
+    container.register_singleton(Settings, settings)
+    container.register_singleton(IEventBus, event_bus)
+    container.register_singleton(StateManager, state_manager)
+    container.register_singleton(ServiceManager, service_manager)
+    container.register_singleton(PromptManager, prompt_manager)
     
-    # 2. Register Language & Speech Services via Factories
+    # 2. Configuration-Driven STT / TTS Provider Factories
+    stt_choice = settings.get("models.stt_provider", "whisper")
+    tts_choice = settings.get("models.tts_provider", "edge-tts")
+    llm_choice = settings.get("models.llm_provider", "ollama")
+    
+    stt_provider = WhisperSTTProvider() if stt_choice == "whisper" else WhisperSTTProvider()
+    tts_provider = EdgeTTSProvider() if tts_choice == "edge-tts" else EdgeTTSProvider()
+    llm_provider = OllamaLLMProvider() if llm_choice == "ollama" else OllamaLLMProvider()
+    
+    container.register_singleton(ISTTProvider, stt_provider)
+    container.register_singleton(ITTSProvider, tts_provider)
+    container.register_singleton(ILLMProvider, llm_provider)
+    
+    # 3. Register Language & Speech Services
     container.register_factory(LanguageManager, lambda c: LanguageManager(c.resolve(Settings)))
     container.register_factory(SpeechManager, lambda c: SpeechManager(
-        stt=WhisperSTTProvider(),
-        tts=EdgeTTSProvider(),
+        stt=c.resolve(ISTTProvider),
+        tts=c.resolve(ITTSProvider),
         language_manager=c.resolve(LanguageManager),
         state_manager=c.resolve(StateManager),
         event_bus=c.resolve(IEventBus)
     ))
     
-    # Register SpeechManager as IService with ServiceManager
+    # Register all IService instances with ServiceManager
     service_mgr = container.resolve(ServiceManager)
     service_mgr.register_service(container.resolve(SpeechManager))
     
-    # 3. Register Intelligence & Executive Agent Factories
-    container.register_singleton(ILLMProvider, OllamaLLMProvider())
+    # 4. Register Intelligence & Executive Agent Factories
     container.register_factory(IntentEngine, lambda c: IntentEngine(c.resolve(ILLMProvider)))
     container.register_factory(ExecutiveAgent, lambda c: ExecutiveAgent(
         c.resolve(IntentEngine), 
@@ -72,10 +89,11 @@ def bootstrap_container() -> DependencyContainer:
     container.register_factory(Planner, lambda c: Planner(
         c.resolve(ILLMProvider), 
         c.resolve(StateManager), 
+        c.resolve(PromptManager),
         c.resolve(IEventBus)
     ))
     
-    # 4. Register Tools, Automation & Skills
+    # 5. Register Tools, Skills & Automation
     tool_reg = ToolRegistry()
     tool_reg.register(SystemControlTool())
     tool_reg.register(ApplicationLauncherTool())
@@ -90,7 +108,7 @@ def bootstrap_container() -> DependencyContainer:
     ))
     container.register_factory(SkillEngine, lambda c: SkillEngine(c.resolve(ToolRegistry)))
     
-    # 5. Register Auxiliary & Management Systems
+    # 6. Register Auxiliary & Management Systems
     container.register_singleton(MemoryManager, MemoryManager())
     container.register_singleton(ContextManager, ContextManager())
     container.register_singleton(SessionManager, SessionManager())
@@ -103,7 +121,7 @@ class JARVISApp:
     """Master Application Orchestrator resolved directly from DependencyContainer."""
     
     def __init__(self, container: Optional[DependencyContainer] = None):
-        logger.info("Initializing JARVIS AI Operating System Assistant from DI Container Factory...")
+        logger.info("Initializing JARVIS AI Operating System Assistant from DI Container...")
         self.container = container or bootstrap_container()
         self.container.register_singleton(JARVISApp, self)
 
@@ -127,6 +145,7 @@ class JARVISApp:
         speech_mgr: SpeechManager = self.container.resolve(SpeechManager)
         state_mgr: StateManager = self.container.resolve(StateManager)
         context_mgr: ContextManager = self.container.resolve(ContextManager)
+        event_bus: IEventBus = self.container.resolve(IEventBus)
         
         # Step 1: Executive Agent Processing
         executive_res = await exec_agent.process(utterance, correlation_id=cid)
@@ -141,7 +160,11 @@ class JARVISApp:
             # Step 2: Capability Planning
             plan: ExecutionPlanModel = await planner.create_plan(utterance, intent.capabilities_needed, correlation_id=cid)
             
-            # Step 3: Parallel Execution via Action Queue with Runtime Context & Retries
+            # Orchestrator publishes plan.created event
+            plan_payload = PlanCreatedEventData(plan_id=plan.plan_id, correlation_id=cid, total_steps=len(plan.steps), user_goal=utterance)
+            await event_bus.publish(EventModel(correlation_id=cid, topic="plan.created", payload=plan_payload, sender="JARVISApp"))
+            
+            # Step 3: Parallel Execution via Action Queue with Runtime Context
             runtime_context = context_mgr.get_snapshot().model_dump()
             tool_results = await executor.execute_plan(plan, context=runtime_context)
             results = [tr.model_dump() for tr in tool_results]

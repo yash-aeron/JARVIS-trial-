@@ -10,13 +10,19 @@ from brain.fallback_planner import FallbackPlanner
 from observability.logger import logger
 
 class Planner:
-    """Multi-Step LLM-First Planner emitting typed PlanCreatedEventData payloads."""
+    """Multi-Step LLM-First Planner orchestrating prompt retrieval, LLM JSON generation, validation, and fallback."""
     
-    def __init__(self, llm: ILLMProvider, state_manager: StateManager, event_bus: Optional[IEventBus] = None):
+    def __init__(
+        self, 
+        llm: ILLMProvider, 
+        state_manager: StateManager, 
+        prompt_manager: PromptManager,
+        event_bus: Optional[IEventBus] = None
+    ):
         self.llm = llm
         self.state_manager = state_manager
+        self.prompt_manager = prompt_manager
         self.event_bus = event_bus
-        self.prompt_manager = PromptManager()
         self.validator = PlanValidator()
         self.fallback_planner = FallbackPlanner()
 
@@ -24,35 +30,18 @@ class Planner:
         self.state_manager.transition_to(AssistantState.PLANNING, f"Creating execution plan for: {goal}", correlation_id=correlation_id)
         logger.info(f"[Planner] Orchestrating capability plan [CID: {correlation_id}] for goal: '{goal}'")
         
-        # 1. Fetch Markdown prompt via PromptManager
+        # 1. PromptManager injected via DI
         prompt_text = self.prompt_manager.get("planner", goal=goal, capabilities=", ".join(capabilities_needed))
         
-        # 2. Call LLM Provider for structured JSON generation
+        # 2. Structured JSON generation from LLM
         llm_json = await self.llm.generate_json(prompt=prompt_text, system_prompt="Output strict JSON execution plans.")
         
-        # 3. Validate structured JSON with PlanValidator
-        validated_plan = self.validator.validate_llm_json(llm_json, goal, correlation_id)
+        # 3. Validation
+        validated_plan = self.validator.validate_llm_json(llm_json, goal, correlation_id, available_capabilities=capabilities_needed)
         
-        # 4. Fallback execution if LLM output is malformed or offline
+        # 4. Fallback execution
         if not validated_plan or not validated_plan.steps:
             fallback_steps = self.fallback_planner.generate_fallback_steps(goal)
             validated_plan = ExecutionPlanModel(correlation_id=correlation_id, user_goal=goal, steps=fallback_steps)
 
-        # 5. Emit typed PlanCreatedEventData Pydantic payload
-        if self.event_bus:
-            payload = PlanCreatedEventData(
-                plan_id=validated_plan.plan_id,
-                correlation_id=correlation_id,
-                total_steps=len(validated_plan.steps),
-                user_goal=goal
-            )
-            await self.event_bus.publish(
-                EventModel(
-                    correlation_id=correlation_id,
-                    topic="plan.created",
-                    data=payload.model_dump(),
-                    sender="Planner"
-                )
-            )
-            
         return validated_plan

@@ -9,7 +9,7 @@ from language.manager import LanguageManager
 from observability.logger import logger
 
 class SpeechManager(IService):
-    """Speech Orchestrator driving VAD, WakeWord, STT, TTS with Correlation IDs and Typed Event Payloads."""
+    """Speech Orchestrator driving STT/TTS providers resolved via DI with typed EventModel payloads."""
     
     def __init__(
         self, 
@@ -40,7 +40,7 @@ class SpeechManager(IService):
 
     async def process_speech_input(self, audio_data: bytes, correlation_id: Optional[str] = None) -> str:
         cid = correlation_id or str(uuid.uuid4())
-        self._state_manager.set_state(AssistantState.LISTENING, "Speech input received", correlation_id=cid)
+        self._state_manager.transition_to(AssistantState.LISTENING, "Speech input received", correlation_id=cid)
         
         text = await self._stt.transcribe(audio_data, language=self._language_manager.active_language)
         lang_res = self._language_manager.process_utterance(text)
@@ -51,7 +51,7 @@ class SpeechManager(IService):
                 EventModel(
                     correlation_id=cid,
                     topic="speech.recognized",
-                    data=payload.model_dump(),
+                    payload=payload,
                     sender="SpeechManager"
                 )
             )
@@ -60,7 +60,7 @@ class SpeechManager(IService):
 
     async def speak(self, text: str, language: Optional[str] = None, correlation_id: Optional[str] = None) -> None:
         cid = correlation_id or str(uuid.uuid4())
-        self._state_manager.set_state(AssistantState.SPEAKING, "Synthesizing speech", correlation_id=cid)
+        self._state_manager.transition_to(AssistantState.SPEAKING, "Synthesizing speech", correlation_id=cid)
         voice = self._language_manager.get_voice_for_language(language)
         
         audio_bytes = await self._tts.synthesize(text, voice=voice, language=language)
@@ -71,9 +71,9 @@ class SpeechManager(IService):
                 EventModel(
                     correlation_id=cid,
                     topic="speech.spoke",
-                    data=payload.model_dump(),
+                    payload=payload,
                     sender="SpeechManager"
                 )
             )
             
-        self._state_manager.set_state(AssistantState.IDLE, "Speech completed", correlation_id=cid)
+        self._state_manager.transition_to(AssistantState.IDLE, "Speech completed", correlation_id=cid)

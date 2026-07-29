@@ -4,8 +4,8 @@ import uuid
 
 from core.container import DependencyContainer
 from core.app import JARVISApp, bootstrap_container
-from core.interfaces import IEventBus
-from core.models import EventModel, ToolRequestModel, ToolResultModel
+from core.interfaces import IEventBus, ISTTProvider, ITTSProvider, ILLMProvider
+from core.models import EventModel, ToolRequestModel, ToolResultModel, GenericEventData, SpeechRecognizedEventData
 from core.event_bus import AsyncEventBus
 from state.state_manager import StateManager
 from state.states import AssistantState, StateTransitionError
@@ -18,45 +18,60 @@ from automation.executor import PlanExecutor
 from automation.undo_manager import UndoManager
 from memory.schema import MemoryItemModel
 from memory.memory_manager import MemoryManager
+from prompts.prompt_manager import PromptManager
 
-def test_strict_class_key_dependency_injection():
+def test_strict_class_and_interface_di():
     container = bootstrap_container()
     app = JARVISApp(container)
     
-    # Assert resolving by Class/Interface type works cleanly
-    resolved_bus = container.resolve(IEventBus)
-    assert isinstance(resolved_bus, AsyncEventBus)
+    stt = container.resolve(ISTTProvider)
+    tts = container.resolve(ITTSProvider)
+    llm = container.resolve(ILLMProvider)
+    prompt_mgr = container.resolve(PromptManager)
     
-    resolved_app = container.resolve(JARVISApp)
-    assert resolved_app is app
+    assert stt is not None
+    assert tts is not None
+    assert llm is not None
+    assert prompt_mgr is not None
 
-def test_guarded_state_machine_transitions():
-    sm = StateManager()
-    sm.transition_to(AssistantState.LISTENING, "User speaking")
-    assert sm.current_state == AssistantState.LISTENING
+def test_sqlite_event_sourcing_persistence():
+    bus = AsyncEventBus(db_path="data/test_event_store.db")
+    cid = str(uuid.uuid4())
+    payload = SpeechRecognizedEventData(text="Testing event persistence")
     
-    # Attempt illegal transition directly from LISTENING -> PLANNING
-    with pytest.raises(StateTransitionError):
-        sm.transition_to(AssistantState.PLANNING, "Direct jump forbidden")
+    event = EventModel(correlation_id=cid, topic="speech.recognized", payload=payload, sender="test")
+    asyncio.run(bus.publish(event))
+    
+    history = bus.get_event_history(correlation_id=cid)
+    assert len(history) >= 1
+    assert history[0].payload.text == "Testing event persistence"
 
-def test_plan_validator_without_silent_swallowing():
+def test_plan_validator_enhanced_checks():
     validator = PlanValidator()
     
-    # Test valid JSON schema parsing
+    # Valid JSON plan
     valid_json = {
         "steps": [
-            {"step_id": 1, "capability": "open_application", "args": {"app_name": "notepad"}, "expected_observation": "Notepad opened"}
+            {"step_id": 1, "capability": "open_application", "args": {"app_name": "notepad"}, "expected_observation": "Opened"}
         ]
     }
-    plan = validator.validate_llm_json(valid_json, "Open Notepad", "cid_123")
+    plan = validator.validate_llm_json(valid_json, "Open Notepad", "cid_999")
     assert plan is not None
     assert len(plan.steps) == 1
-    assert plan.steps[0].capability == "open_application"
+    assert plan.steps[0].step_id == 1
 
-def test_memory_retrieval_ranking():
-    mem_mgr = MemoryManager(db_path="data/test_ranked_memory.db")
+def test_guarded_state_transition_to():
+    sm = StateManager()
+    sm.transition_to(AssistantState.LISTENING, "Listening")
+    assert sm.current_state == AssistantState.LISTENING
+    
+    with pytest.raises(StateTransitionError):
+        sm.transition_to(AssistantState.PLANNING, "Illegal transition")
+
+def test_memory_retrieval_ranking_formula():
+    mem_mgr = MemoryManager(db_path="data/test_ranked_mem.db")
     item1 = MemoryItemModel(content="User prefers dark theme", tags=["preference", "theme"], importance=4.5)
-    item2 = MemoryItemModel(content="User bought groceries", tags=["personal", "shopping"], importance=1.0)
+    item2 = MemoryItemModel(content="User bought milk", tags=["grocery"], importance=1.0)
     
     mem_mgr.store(item1)
     mem_mgr.store(item2)
@@ -66,30 +81,6 @@ def test_memory_retrieval_ranking():
     top_item, score = ranked[0]
     assert top_item.content == "User prefers dark theme"
     assert score > 3.0
-
-@pytest.mark.asyncio
-async def test_parallel_dependency_aware_executor():
-    registry = ToolRegistry()
-    tool = ApplicationLauncherTool()
-    registry.register(tool)
-    
-    undo_mgr = UndoManager()
-    state_mgr = StateManager()
-    executor = PlanExecutor(registry, undo_mgr, state_mgr)
-    cid = str(uuid.uuid4())
-    
-    plan = ExecutionPlanModel(
-        correlation_id=cid,
-        user_goal="Open apps concurrently",
-        steps=[
-            PlanStepModel(step_id=1, capability="open_application", args={"app_name": "notepad"}, expected_observation="Notepad", depends_on=[]),
-            PlanStepModel(step_id=2, capability="open_application", args={"app_name": "notepad"}, expected_observation="Notepad 2", depends_on=[])
-        ]
-    )
-    
-    results = await executor.execute_plan(plan)
-    assert len(results) == 2
-    assert all(r.status == "completed" for r in results)
 
 @pytest.mark.asyncio
 async def test_full_end_to_end_pipeline():

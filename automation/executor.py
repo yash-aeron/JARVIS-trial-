@@ -1,6 +1,5 @@
 import asyncio
 from typing import Dict, Any, Optional, List, Set
-from brain.planner import ExecutionPlanModel, PlanStepModel
 from tools.registry import ToolRegistry
 from automation.action_queue import ActionQueue, ActionItemModel, ActionQueueState
 from automation.undo_manager import UndoManager
@@ -9,6 +8,7 @@ from state.states import AssistantState
 from core.interfaces import IEventBus
 from core.models import (
     EventModel, ToolRequestModel, ToolResultModel, 
+    ExecutionPlanModel, PlanStepModel,
     ToolStartedEventData, ToolFinishedEventData
 )
 from observability.logger import logger
@@ -65,7 +65,7 @@ class PlanExecutor:
         if self.event_bus:
             start_payload = ToolStartedEventData(step_id=step.step_id, capability=step.capability, tool_name=tool.metadata.name)
             await self.event_bus.publish(
-                EventModel(correlation_id=cid, topic="tool.started", data=start_payload.model_dump(), sender="PlanExecutor")
+                EventModel(correlation_id=cid, topic="tool.started", payload=start_payload, sender="PlanExecutor")
             )
             
         tool_res: Optional[ToolResultModel] = None
@@ -98,32 +98,28 @@ class PlanExecutor:
                 error=tool_res.error if tool_res else None
             )
             await self.event_bus.publish(
-                EventModel(correlation_id=cid, topic="tool.finished", data=fin_payload.model_dump(), sender="PlanExecutor")
+                EventModel(correlation_id=cid, topic="tool.finished", payload=fin_payload, sender="PlanExecutor")
             )
             
         return tool_res or ToolResultModel(request_id=item.item_id, correlation_id=cid, status="failed", error="Unknown error")
 
     async def execute_plan(self, plan: ExecutionPlanModel, context: Optional[Dict[str, Any]] = None) -> List[ToolResultModel]:
         cid = plan.correlation_id
-        self.state_manager.set_state(AssistantState.EXECUTING, f"Executing plan {plan.plan_id}", correlation_id=cid)
+        self.state_manager.transition_to(AssistantState.EXECUTING, f"Executing plan {plan.plan_id}", correlation_id=cid)
         
         completed_step_ids: Set[int] = set()
         results: Dict[int, ToolResultModel] = {}
         pending_steps = list(plan.steps)
         
-        # Parallel Execution Loop based on step dependencies
         while pending_steps:
-            # Find all steps whose dependencies are satisfied
             ready_steps = [
                 s for s in pending_steps 
                 if all(dep in completed_step_ids for dep in s.depends_on)
             ]
             
             if not ready_steps:
-                # Circular dependency fallback or missing dependency
                 ready_steps = [pending_steps[0]]
                 
-            # Execute all ready steps concurrently in parallel!
             tasks = [self._execute_single_step(step, plan.plan_id, cid, context) for step in ready_steps]
             step_results = await asyncio.gather(*tasks, return_exceptions=True)
             
@@ -143,5 +139,5 @@ class PlanExecutor:
             if failed:
                 break
                 
-        self.state_manager.set_state(AssistantState.IDLE, "Execution complete", correlation_id=cid)
+        self.state_manager.transition_to(AssistantState.IDLE, "Execution complete", correlation_id=cid)
         return list(results.values())
