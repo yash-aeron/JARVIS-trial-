@@ -2,6 +2,7 @@ import pytest
 import asyncio
 import uuid
 from core.app import JARVISApp
+from core.models import UserCommandResultModel
 from state.states import AssistantState
 from memory.schema import MemoryItemModel
 from memory.memory_manager import MemoryManager
@@ -13,11 +14,11 @@ async def test_scenario_open_chrome_and_vscode():
     await app.initialize()
     
     cid = str(uuid.uuid4())
-    res = await app.process_user_command("Open Chrome and VS Code", correlation_id=cid)
+    res: UserCommandResultModel = await app.process_user_command("Open Chrome and VS Code", correlation_id=cid)
     
-    assert res["correlation_id"] == cid
-    assert len(res["execution_results"]) >= 1
-    assert res["execution_results"][0]["status"] == "completed"
+    assert res.correlation_id == cid
+    assert len(res.execution_results) >= 1
+    assert res.execution_results[0].status == "completed"
     
     await app.shutdown()
 
@@ -28,10 +29,10 @@ async def test_scenario_multilingual_code_switching():
     await app.initialize()
     
     cid = str(uuid.uuid4())
-    res = await app.process_user_command("Jarvis, Chrome kholo and check system status", correlation_id=cid)
+    res: UserCommandResultModel = await app.process_user_command("Jarvis, Chrome kholo and check system status", correlation_id=cid)
     
-    assert res["correlation_id"] == cid
-    assert res["execution_results"][0]["status"] == "completed"
+    assert res.correlation_id == cid
+    assert res.execution_results[0].status == "completed"
     
     await app.shutdown()
 

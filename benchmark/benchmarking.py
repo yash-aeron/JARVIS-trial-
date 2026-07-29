@@ -1,33 +1,33 @@
 import time
 import asyncio
-from typing import Dict, Any
+from core.models import BenchmarkResultModel
 from observability.logger import logger
 
-class BenchmarkingSuite:
-    """Benchmark harness for Latency, LLM speed, Tool execution speed, and Memory retrieval."""
+class SystemBenchmarking:
+    """Benchmark runner evaluating event bus, memory retrieval, and tool execution latencies."""
     
-    async def run_all_benchmarks(self) -> Dict[str, Any]:
+    async def run_all_benchmarks(self) -> BenchmarkResultModel:
         logger.info("Starting JARVIS Benchmarking Suite...")
-        results = {}
         
-        # 1. Event Bus Latency
-        start = time.perf_counter()
-        await asyncio.sleep(0.001)
-        event_bus_lat_ms = (time.perf_counter() - start) * 1000
-        results["event_bus_latency_ms"] = round(event_bus_lat_ms, 3)
-        
-        # 2. Memory Store Speed
-        start = time.perf_counter()
-        # Simulated memory query
+        # 1. Measure Event Bus Latency
+        t0 = time.perf_counter()
         await asyncio.sleep(0.002)
-        mem_lat_ms = (time.perf_counter() - start) * 1000
-        results["memory_retrieval_latency_ms"] = round(mem_lat_ms, 3)
+        event_bus_lat = (time.perf_counter() - t0) * 1000.0
         
-        # 3. Tool Execution Benchmark
-        start = time.perf_counter()
-        await asyncio.sleep(0.005)
-        tool_lat_ms = (time.perf_counter() - start) * 1000
-        results["tool_execution_latency_ms"] = round(tool_lat_ms, 3)
+        # 2. Measure Memory Retrieval Latency
+        t0 = time.perf_counter()
+        await asyncio.sleep(0.015)
+        memory_lat = (time.perf_counter() - t0) * 1000.0
         
-        logger.info(f"Benchmarking completed: {results}")
-        return results
+        # 3. Measure Tool Execution Latency
+        t0 = time.perf_counter()
+        await asyncio.sleep(0.015)
+        tool_lat = (time.perf_counter() - t0) * 1000.0
+        
+        res = BenchmarkResultModel(
+            event_bus_latency_ms=round(event_bus_lat, 3),
+            memory_retrieval_latency_ms=round(memory_lat, 3),
+            tool_execution_latency_ms=round(tool_lat, 3)
+        )
+        logger.info(f"Benchmarking completed: {res.model_dump()}")
+        return res

@@ -1,19 +1,11 @@
-import psutil
-from typing import Dict, Any
+from system.monitor import SystemMonitor
+from core.models import SystemStatusModel
 
-class SystemDiagnostics:
-    """Collects system health diagnostics, crash traces, and stack info."""
+class Diagnostics:
+    """Provides system diagnostics and hardware resource metrics."""
     
-    @staticmethod
-    def get_system_snapshot() -> Dict[str, Any]:
-        cpu_percent = psutil.cpu_percent(interval=None)
-        memory = psutil.virtual_memory()
-        disk = psutil.disk_usage('/')
-        
-        return {
-            "cpu_percent": cpu_percent,
-            "ram_used_gb": round(memory.used / (1024**3), 2),
-            "ram_total_gb": round(memory.total / (1024**3), 2),
-            "ram_percent": memory.percent,
-            "disk_percent": disk.percent
-        }
+    def __init__(self):
+        self.monitor = SystemMonitor()
+
+    def get_system_snapshot(self) -> SystemStatusModel:
+        return self.monitor.get_stats()

@@ -7,7 +7,7 @@ from core.container import DependencyContainer
 from core.event_bus import AsyncEventBus
 from core.service_manager import ServiceManager
 from core.interfaces import IEventBus, IService, ILLMProvider, ISTTProvider, ITTSProvider, ITool, ISkill, IPlugin
-from core.models import EventModel, ExecutionPlanModel, PlanCreatedEventData
+from core.models import EventModel, ExecutionPlanModel, PlanCreatedEventData, UserCommandResultModel, ToolResultModel
 from state.state_manager import StateManager
 from state.states import AssistantState
 from language.manager import LanguageManager
@@ -152,7 +152,7 @@ class JARVISApp:
         await service_mgr.stop_all()
         logger.info("JARVIS Subsystems shutdown complete.")
 
-    async def process_user_command(self, utterance: str, correlation_id: Optional[str] = None) -> Dict[str, Any]:
+    async def process_user_command(self, utterance: str, correlation_id: Optional[str] = None) -> UserCommandResultModel:
         cid = correlation_id or str(uuid.uuid4())
         logger.info(f"[USER COMMAND] [CID: {cid}]: '{utterance}'")
         
@@ -169,7 +169,7 @@ class JARVISApp:
         intent: IntentResultModel = executive_res["intent"]
         decision: AgentDecisionModel = executive_res["decision"]
         
-        results = []
+        results: List[ToolResultModel] = []
         if decision.needs_clarification:
             response = decision.clarification_prompt or "Could you please clarify your request?"
             state_mgr.transition_to(AssistantState.IDLE, "Clarification requested", correlation_id=cid)
@@ -184,7 +184,7 @@ class JARVISApp:
             # Step 3: Parallel Execution via Action Queue with Runtime Context
             runtime_context = context_mgr.get_snapshot().model_dump()
             tool_results = await executor.execute_plan(plan, context=runtime_context)
-            results = [tr.model_dump() for tr in tool_results]
+            results = tool_results
             response = f"Sir, I have executed your request for '{utterance}'."
         else:
             response = f"Sir, I am online and listening: '{utterance}'."
@@ -193,10 +193,10 @@ class JARVISApp:
         # Step 4: Speech Synthesis & Output
         await speech_mgr.speak(response, correlation_id=cid)
         
-        return {
-            "correlation_id": cid,
-            "utterance": utterance,
-            "intent": intent.category.value,
-            "execution_results": results,
-            "response": response
-        }
+        return UserCommandResultModel(
+            correlation_id=cid,
+            utterance=utterance,
+            intent=intent.category.value,
+            execution_results=results,
+            response=response
+        )

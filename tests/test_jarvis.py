@@ -5,7 +5,7 @@ import uuid
 from core.container import DependencyContainer
 from core.app import JARVISApp, bootstrap_container
 from core.interfaces import IEventBus, ISTTProvider, ITTSProvider, ILLMProvider
-from core.models import EventModel, ToolRequestModel, ToolResultModel, GenericEventData, SpeechRecognizedEventData
+from core.models import EventModel, ToolRequestModel, ToolResultModel, GenericEventData, SpeechRecognizedEventData, UserCommandResultModel
 from core.event_bus import AsyncEventBus
 from state.state_manager import StateManager
 from state.states import AssistantState, StateTransitionError
@@ -49,7 +49,6 @@ def test_sqlite_event_sourcing_persistence():
 def test_plan_validator_enhanced_checks():
     validator = PlanValidator()
     
-    # Valid JSON plan
     valid_json = {
         "steps": [
             {"step_id": 1, "capability": "open_application", "args": {"app_name": "notepad"}, "expected_observation": "Opened"}
@@ -87,10 +86,10 @@ async def test_full_end_to_end_pipeline():
     app = JARVISApp()
     await app.initialize()
     
-    res = await app.process_user_command("Open notepad")
-    assert "correlation_id" in res
-    assert res["intent"] in ["SINGLE_TOOL", "MULTI_STEP_PLAN"]
-    assert len(res["execution_results"]) >= 1
-    assert res["execution_results"][0]["status"] == "completed"
+    res: UserCommandResultModel = await app.process_user_command("Open notepad")
+    assert res.correlation_id is not None
+    assert res.intent in ["SINGLE_TOOL", "MULTI_STEP_PLAN"]
+    assert len(res.execution_results) >= 1
+    assert res.execution_results[0].status == "completed"
     
     await app.shutdown()

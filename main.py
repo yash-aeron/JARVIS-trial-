@@ -3,7 +3,7 @@ import argparse
 import asyncio
 from core.app import JARVISApp
 from dashboard.app import run_dashboard
-from benchmark.benchmarking import BenchmarkingSuite
+from benchmark.benchmarking import SystemBenchmarking
 from evaluation.evaluator import QualityEvaluator
 from observability.logger import logger
 
@@ -23,18 +23,18 @@ async def run_cli_loop(app: JARVISApp):
                 break
                 
             res = await app.process_user_command(cmd)
-            print(f"\n[JARVIS Response]: {res['response']}")
-            print(f"[Details]: Intent={res['intent']}, Steps Executed={len(res['execution_results'])}\n")
+            print(f"\n[JARVIS Response]: {res.response}")
+            print(f"[Details]: Intent={res.intent}, Steps Executed={len(res.execution_results)}\n")
     finally:
         await app.shutdown()
 
 async def run_benchmarks():
-    suite = BenchmarkingSuite()
+    suite = SystemBenchmarking()
     results = await suite.run_all_benchmarks()
     print("\n" + "="*50)
     print("  JARVIS Benchmarking Suite Results")
     print("="*50)
-    for k, v in results.items():
+    for k, v in results.model_dump().items():
         print(f"  - {k}: {v}")
     print("="*50 + "\n")
 
@@ -45,8 +45,8 @@ def run_evaluations():
     print("\n" + "="*50)
     print("  JARVIS Quality Evaluation Results")
     print("="*50)
-    print(f"  - Tool Selection Accuracy: {res1['score'] * 100}%")
-    print(f"  - Plan Optimality Score: {res2['score'] * 100}%")
+    print(f"  - Tool Selection Accuracy: {100.0 if res1.match else 0.0}%")
+    print(f"  - Plan Optimality Score: {100.0 if res2.optimal else 0.0}%")
     print("="*50 + "\n")
 
 def main():

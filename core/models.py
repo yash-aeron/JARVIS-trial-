@@ -72,6 +72,38 @@ class ActionItemModel(BaseModel):
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
+class LanguageDetectionModel(BaseModel):
+    language: str = "en-US"
+    confidence: float = 1.0
+    is_code_switching: bool = False
+
+class SystemStatusModel(BaseModel):
+    cpu_percent: float
+    ram_percent: float
+    disk_percent: float
+
+class BenchmarkResultModel(BaseModel):
+    event_bus_latency_ms: float
+    memory_retrieval_latency_ms: float
+    tool_execution_latency_ms: float
+
+class ToolSelectionEvalModel(BaseModel):
+    predicted_tool: str
+    expected_tool: str
+    match: bool
+
+class PlanOptimalityEvalModel(BaseModel):
+    steps: int
+    max_expected: int
+    optimal: bool
+
+class UserCommandResultModel(BaseModel):
+    correlation_id: str
+    utterance: str
+    intent: str
+    execution_results: List[ToolResultModel] = Field(default_factory=list)
+    response: str
+
 # Dedicated Pydantic Event Payloads
 class ToolStartedEventData(BaseModel):
     step_id: int
@@ -87,7 +119,7 @@ class ToolFinishedEventData(BaseModel):
 
 class SpeechRecognizedEventData(BaseModel):
     text: str
-    language_details: Dict[str, Any] = Field(default_factory=dict)
+    language_details: LanguageDetectionModel = Field(default_factory=LanguageDetectionModel)
 
 class SpeechSpokeEventData(BaseModel):
     text: str

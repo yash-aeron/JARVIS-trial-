@@ -1,23 +1,28 @@
 import re
-from typing import Dict, Any, List
+from core.models import LanguageDetectionModel
+from observability.logger import logger
 
-class CodeSwitchLanguageDetector:
-    """Detects primary language and code-switching markers (e.g. Hindi-English mixed commands)."""
+class LanguageDetector:
+    """Detects primary language and code-switching markers in natural language utterances."""
     
-    HINDI_KEYWORDS = ["kholo", "chalao", "dikhao", "karo", "batao", "kya", "kaise", "samjhaao"]
+    HINDI_KEYWORDS = ["kholo", "chalo", "kaise", "batao", "kya", "shuru", "band", "banao", "dikhao", "madad"]
 
-    def detect(self, text: str) -> Dict[str, Any]:
+    def detect(self, text: str) -> LanguageDetectionModel:
         text_lower = text.lower()
-        has_hindi = any(re.search(r'\b' + re.escape(kw) + r'\b', text_lower) for kw in self.HINDI_KEYWORDS)
+        words = re.findall(r'\w+', text_lower)
         
-        if has_hindi:
-            return {
-                "primary_language": "hi-IN",
-                "code_switching": True,
-                "detected_languages": ["en-US", "hi-IN"]
-            }
-        return {
-            "primary_language": "en-US",
-            "code_switching": False,
-            "detected_languages": ["en-US"]
-        }
+        hindi_count = sum(1 for w in words if w in self.HINDI_KEYWORDS)
+        
+        if hindi_count > 0:
+            logger.info(f"Detected Hinglish code-switching in text: '{text[:30]}...'")
+            return LanguageDetectionModel(
+                language="hi-IN",
+                confidence=min(1.0, 0.6 + (hindi_count * 0.15)),
+                is_code_switching=True
+            )
+            
+        return LanguageDetectionModel(
+            language="en-US",
+            confidence=1.0,
+            is_code_switching=False
+        )
