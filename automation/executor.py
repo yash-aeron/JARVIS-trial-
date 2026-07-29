@@ -21,12 +21,14 @@ class PlanExecutor:
         tool_registry: ToolRegistry, 
         undo_manager: UndoManager,
         state_manager: StateManager,
-        event_bus: Optional[IEventBus] = None
+        event_bus: Optional[IEventBus] = None,
+        permission_manager: Optional[Any] = None
     ):
         self.tool_registry = tool_registry
         self.undo_manager = undo_manager
         self.state_manager = state_manager
         self.event_bus = event_bus
+        self.permission_manager = permission_manager
         self.action_queue = ActionQueue()
 
     async def _execute_single_step(
@@ -52,6 +54,12 @@ class PlanExecutor:
             item.error = f"No tools found for capability '{step.capability}'."
             return ToolResultModel(request_id=item.item_id, correlation_id=cid, status="failed", error=item.error)
             
+        if self.permission_manager:
+            if not self.permission_manager.evaluate_request_security(step.capability, cid):
+                item.state = "FAILED"
+                item.error = f"Permission denied: Capability '{step.capability}' blocked by security policy."
+                return ToolResultModel(request_id=item.item_id, correlation_id=cid, status="failed", error=item.error)
+
         tool, score = ranked_candidates[0]
         tool_req = ToolRequestModel(
             request_id=item.item_id,

@@ -127,12 +127,16 @@ def _register_automation(container: DependencyContainer) -> None:
     tool_reg.register(ScreenshotCaptureTool())
     container.register_singleton(ToolRegistry, tool_reg)
 
+    from security.permission_manager import PermissionManager
+    container.register_singleton(PermissionManager, PermissionManager())
+
     container.register_singleton(UndoManager, UndoManager())
     container.register_factory(PlanExecutor, lambda c: PlanExecutor(
         tool_registry=c.resolve(ToolRegistry),
         undo_manager=c.resolve(UndoManager),
         state_manager=c.resolve(StateManager),
-        event_bus=c.resolve(IEventBus)
+        event_bus=c.resolve(IEventBus),
+        permission_manager=c.resolve(PermissionManager)
     ))
     container.register_factory(SkillEngine, lambda c: SkillEngine(c.resolve(ToolRegistry)))
 

@@ -14,6 +14,7 @@ from brain.plan_validator import PlanValidator
 from brain.fallback_planner import FallbackPlanner
 from automation.executor import PlanExecutor
 from automation.undo_manager import UndoManager
+from security.permission_manager import PermissionManager
 from memory.schema import MemoryItemModel
 from memory.memory_manager import MemoryManager
 from speech.speech_manager import SpeechManager
@@ -127,6 +128,9 @@ async def test_plan_executor_end_to_end_regression():
             )
         ]
     )
+
+    pm: PermissionManager = container.resolve(PermissionManager)
+    pm.grant_approval(plan.correlation_id)
 
     results = await executor.execute_plan(plan)
     assert len(results) == 1
