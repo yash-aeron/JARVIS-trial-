@@ -57,10 +57,25 @@ class PluginManager:
                 "name": p.name,
                 "version": p.version,
                 "description": self._manifests[p.name].description if p.name in self._manifests else "",
-                "author": self._manifests[p.name].author if p.name in self._manifests else "Built-in"
+                "author": self._manifests[p.name].author if p.name in self._manifests else "Built-in",
+                "permissions": self._manifests[p.name].permissions if p.name in self._manifests else []
             }
             for p in self._plugins.values()
         ]
+
+    def verify_permission_gate(self, plugin_name: str, required_permission: str) -> bool:
+        """Permission-gate check: verifies if a plugin manifest declares a required capability/permission."""
+        if plugin_name not in self._manifests:
+            logger.warning(f"[PluginManager] Permission check failed: unknown plugin '{plugin_name}'")
+            return False
+
+        declared_perms = self._manifests[plugin_name].permissions
+        # Grant if exact permission or wildcard '*' is declared
+        if required_permission in declared_perms or "*" in declared_perms:
+            return True
+
+        logger.warning(f"[PluginManager] Permission denied for plugin '{plugin_name}': requested '{required_permission}', declared {declared_perms}")
+        return False
 
     async def discover_and_load_all(self, directory: Optional[str] = None) -> List[str]:
         """

@@ -1,0 +1,14 @@
+{
+  "name": "spotify_control",
+  "version": "1.0.0",
+  "description": "Third-party Spotify media playback controller plugin for JARVIS",
+  "author": "JARVIS Community",
+  "entry_point": "plugin:SpotifyControlPlugin",
+  "dependencies": [],
+  "permissions": ["network", "media:playback"],
+  "declared_events": ["spotify.playback_changed"],
+  "declared_capabilities": ["spotify_playback", "media_control"],
+  "settings_schema": {
+    "device_name": {"type": "string", "default": "Desktop"}
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "vscode_workspace",
+  "version": "1.0.0",
+  "description": "Third-party VS Code workspace & extension manager plugin for JARVIS",
+  "author": "JARVIS Community",
+  "entry_point": "plugin:VSCodeWorkspacePlugin",
+  "dependencies": [],
+  "permissions": ["filesystem:read", "process:launch"],
+  "declared_events": ["workspace.opened"],
+  "declared_capabilities": ["vscode_workspace", "workspace_command"],
+  "settings_schema": {
+    "default_folder": {"type": "string", "default": "."}
+  }
+}

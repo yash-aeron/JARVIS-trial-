@@ -20,13 +20,16 @@ from observability.logger import logger
 
 class PluginManifest(BaseModel):
     """Manifest schema for third-party plugin packages (plugin.json)."""
-    name:         str
-    version:      str
-    description:  str           = ""
-    author:       str           = "Community"
-    entry_point:  str           = "plugin:Plugin"  # format: 'module_name:ClassName'
-    dependencies: List[str]     = Field(default_factory=list)
-    permissions:  List[str]     = Field(default_factory=list)
+    name:                  str
+    version:               str
+    description:           str           = ""
+    author:                str           = "Community"
+    entry_point:           str           = "plugin:Plugin"  # format: 'module_name:ClassName'
+    dependencies:          List[str]     = Field(default_factory=list)
+    permissions:           List[str]     = Field(default_factory=list)  # e.g., ["network", "filesystem:read", "process:launch"]
+    declared_events:       List[str]     = Field(default_factory=list)  # e.g., ["weather.updated", "spotify.playback_changed"]
+    declared_capabilities: List[str]     = Field(default_factory=list)  # e.g., ["get_weather", "spotify_control"]
+    settings_schema:       Dict[str, Any]= Field(default_factory=dict)  # JSON-schema representation for user config
 
 
 class PluginContext:
