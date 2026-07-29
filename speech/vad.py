@@ -10,7 +10,7 @@ class SileroVAD:
         self.sampling_rate = sampling_rate
 
     def is_speech(self, pcm_data: bytes) -> bool:
-        if not pcm_data:
+        if not pcm_data or len(pcm_data) < 2:
             return False
             
         # Calculate RMS energy of 16-bit PCM audio
@@ -27,6 +27,9 @@ class SileroVAD:
 
     def extract_speech_segments(self, pcm_data: bytes, chunk_size: int = 1024) -> List[bytes]:
         speech_chunks: List[bytes] = []
+        if not pcm_data:
+            return speech_chunks
+            
         for i in range(0, len(pcm_data), chunk_size):
             chunk = pcm_data[i:i+chunk_size]
             if self.is_speech(chunk):

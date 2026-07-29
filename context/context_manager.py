@@ -83,17 +83,20 @@ class ContextManager:
                 kernel32 = ctypes.windll.kernel32
                 
                 if user32.OpenClipboard(None):
-                    CF_UNICODETEXT = 13
-                    if user32.IsClipboardFormatAvailable(CF_UNICODETEXT):
-                        h_data = user32.GetClipboardData(CF_UNICODETEXT)
-                        if h_data:
-                            p_data = kernel32.GlobalLock(h_data)
-                            if p_data:
-                                text = ctypes.c_wchar_p(p_data).value or ""
-                                kernel32.GlobalUnlock(h_data)
-                                user32.CloseClipboard()
-                                return text[:300]  # First 300 chars
-                    user32.CloseClipboard()
+                    try:
+                        CF_UNICODETEXT = 13
+                        if user32.IsClipboardFormatAvailable(CF_UNICODETEXT):
+                            h_data = user32.GetClipboardData(CF_UNICODETEXT)
+                            if h_data:
+                                p_data = kernel32.GlobalLock(h_data)
+                                if p_data:
+                                    try:
+                                        text = ctypes.c_wchar_p(p_data).value or ""
+                                        return text[:300]  # First 300 chars
+                                    finally:
+                                        kernel32.GlobalUnlock(h_data)
+                    finally:
+                        user32.CloseClipboard()
             except Exception as e:
                 logger.debug(f"[ContextManager] Clipboard query error: {e}")
         return ""

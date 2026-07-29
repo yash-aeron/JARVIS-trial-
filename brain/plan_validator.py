@@ -16,25 +16,35 @@ class PlanValidator:
         seen_step_ids: Set[int] = set()
         
         for idx, raw_step in enumerate(llm_json["steps"], start=1):
+            if not isinstance(raw_step, dict):
+                logger.warning(f"[PlanValidator] Skipping non-dict step element at index {idx}: {raw_step}")
+                continue
+                
             try:
                 step_id = raw_step.get("step_id", idx)
-                if step_id in seen_step_ids:
-                    logger.warning(f"[PlanValidator] Duplicate step_id {step_id} detected. Reassigning.")
+                if not isinstance(step_id, int) or step_id in seen_step_ids:
+                    logger.warning(f"[PlanValidator] Invalid or duplicate step_id '{step_id}' detected. Reassigning.")
                     step_id = max(seen_step_ids, default=0) + 1
                     
                 seen_step_ids.add(step_id)
-                capability = raw_step.get("capability", "open_application")
+                capability = str(raw_step.get("capability", "open_application"))
                 
                 # Check capability availability
                 if available_capabilities and capability not in available_capabilities:
                     logger.warning(f"[PlanValidator] Capability '{capability}' is not registered in ToolRegistry.")
                     
+                raw_args = raw_step.get("args", {})
+                args_dict = raw_args if isinstance(raw_args, dict) else {}
+                
+                raw_deps = raw_step.get("depends_on", [])
+                deps_list = [d for d in raw_deps if isinstance(d, int)] if isinstance(raw_deps, list) else []
+                
                 step_obj = PlanStepModel(
                     step_id=step_id,
                     capability=capability,
-                    args=raw_step.get("args", {}),
-                    expected_observation=raw_step.get("expected_observation", "Step completed"),
-                    depends_on=raw_step.get("depends_on", [])
+                    args=args_dict,
+                    expected_observation=str(raw_step.get("expected_observation", "Step completed")),
+                    depends_on=deps_list
                 )
                 steps.append(step_obj)
             except ValidationError as e:
