@@ -94,6 +94,12 @@ _APP_CATALOG: Dict[str, Tuple[List[str], List[str]]] = {
     "idea":           (["idea64.exe"],                ["cmd", "/c", "start", "idea64"]),
     "postman":        (["postman.exe"],               ["cmd", "/c", "start", "postman"]),
     "docker":         (["docker desktop.exe", "docker"],["cmd", "/c", "start", "docker desktop"]),
+    "steam":          (["steam.exe"],                 ["cmd", "/c", "start", "steam"]),
+    "zoom":           (["zoom.exe"],                  ["cmd", "/c", "start", "zoom"]),
+    "brave":          (["brave.exe"],                 ["cmd", "/c", "start", "brave"]),
+    "opera":          (["opera.exe"],                 ["cmd", "/c", "start", "opera"]),
+    "snipping tool":  (["snippingtool.exe"],          ["snippingtool.exe"]),
+    "control panel":  (["control.exe"],               ["control.exe"]),
 }
 
 

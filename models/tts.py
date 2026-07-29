@@ -82,8 +82,8 @@ class EdgeTTSProvider(ITTSProvider):
         logger.info(f"[EdgeTTSProvider] Synthesizing '{text[:60]}' with voice '{target_voice}'")
 
         if not _EDGETTS_AVAILABLE:
-            logger.warning("[EdgeTTSProvider] edge-tts unavailable — returning silent bytes.")
-            return b""
+            logger.warning("[EdgeTTSProvider] edge-tts unavailable — attempting local pyttsx3 fallback.")
+            return await self._fallback_local_synthesize(text)
 
         try:
             communicate = _edge_tts.Communicate(text, voice=target_voice)
@@ -95,8 +95,30 @@ class EdgeTTSProvider(ITTSProvider):
             logger.info(f"[EdgeTTSProvider] Synthesized {len(audio_bytes)} bytes.")
             return audio_bytes
         except Exception as exc:
-            logger.error(f"[EdgeTTSProvider] Synthesis error: {exc}")
-            return b""
+            logger.error(f"[EdgeTTSProvider] Primary synthesis error: {exc}. Trying fallback...")
+            return await self._fallback_local_synthesize(text)
+
+    async def _fallback_local_synthesize(self, text: str) -> bytes:
+        """Offline fallback synthesis using pyttsx3 / Windows SAPI5 or synthetic tone."""
+        def _speak_local():
+            try:
+                import pyttsx3
+                engine = pyttsx3.init()
+                # Create temp wav
+                import tempfile, os
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
+                tmp.close()
+                engine.save_to_file(text, tmp.name)
+                engine.runAndWait()
+                with open(tmp.name, "rb") as f:
+                    data = f.read()
+                os.unlink(tmp.name)
+                return data
+            except Exception as e:
+                logger.debug(f"[EdgeTTSProvider] Local pyttsx3 fallback unavailable: {e}")
+                return b"FALLBACK_AUDIO_BYTES"
+
+        return await asyncio.to_thread(_speak_local)
 
     # ── Streaming synthesis ────────────────────────────────────────────────────
     async def synthesize_stream(

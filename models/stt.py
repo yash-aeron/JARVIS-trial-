@@ -116,8 +116,8 @@ class FasterWhisperSTTProvider(ISTTProvider):
             return ""
 
         if not self._ensure_model():
-            logger.warning("[FasterWhisperSTT] Model unavailable — returning empty string.")
-            return ""
+            logger.warning("[FasterWhisperSTT] Primary model unavailable — invoking SpeechRecognition fallback.")
+            return await self._fallback_transcribe(audio_data, language)
 
         # Run Whisper in a thread-pool to avoid blocking the event loop
         loop = asyncio.get_event_loop()
@@ -138,8 +138,23 @@ class FasterWhisperSTTProvider(ISTTProvider):
             logger.info(f"[FasterWhisperSTT] Transcribed: '{text[:80]}'")
             return text
         except Exception as exc:
-            logger.error(f"[FasterWhisperSTT] Transcription error: {exc}")
-            return ""
+            logger.error(f"[FasterWhisperSTT] Primary transcription error: {exc}. Invoking fallback...")
+            return await self._fallback_transcribe(audio_data, language)
+
+    async def _fallback_transcribe(self, audio_data: bytes, language: Optional[str] = None) -> str:
+        """Fallback transcription using SpeechRecognition engine."""
+        def _recognize():
+            try:
+                import speech_recognition as sr
+                recognizer = sr.Recognizer()
+                wav_bytes = _pcm_to_wav(audio_data, self.sample_rate)
+                with sr.AudioFile(io.BytesIO(wav_bytes)) as source:
+                    audio = recognizer.record(source)
+                return recognizer.recognize_google(audio, language=language or "en-US")
+            except Exception as e:
+                logger.debug(f"[FasterWhisperSTT] SpeechRecognition fallback unavailable: {e}")
+                return ""
+        return await asyncio.to_thread(_recognize)
 
     # ── Streaming transcription ────────────────────────────────────────────────
     async def transcribe_stream(
