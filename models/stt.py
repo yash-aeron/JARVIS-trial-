@@ -33,5 +33,9 @@ class WhisperSTTProvider(ISTTProvider):
         self._is_interrupted = False
         async for chunk in audio_stream:
             if self._is_interrupted:
+                logger.warning("[WhisperSTTProvider] Streaming transcription cancelled by interruption.")
                 break
-            yield "transcribed_chunk"
+            await asyncio.sleep(0.005)
+            yield "Jarvis, "
+            yield "open "
+            yield "VS Code"

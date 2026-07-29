@@ -18,6 +18,7 @@ from automation.executor import PlanExecutor
 from automation.undo_manager import UndoManager
 from memory.schema import MemoryItemModel
 from memory.memory_manager import MemoryManager
+from speech.speech_manager import SpeechManager
 from prompts.prompt_manager import PromptManager
 
 def test_strict_class_and_interface_di():
@@ -80,6 +81,31 @@ def test_memory_retrieval_ranking_formula():
     top_item, score = ranked[0]
     assert top_item.content == "User prefers dark theme"
     assert score > 3.0
+
+@pytest.mark.asyncio
+async def test_streaming_speech_pipeline():
+    container = bootstrap_container()
+    speech_mgr = container.resolve(SpeechManager)
+    
+    async def sample_audio_stream():
+        yield b"chunk1"
+        yield b"chunk2"
+        
+    async def sample_text_stream():
+        yield "Hello "
+        yield "world"
+        
+    received_tokens = []
+    async for token in speech_mgr.process_streaming_input(sample_audio_stream()):
+        received_tokens.append(token)
+        
+    assert len(received_tokens) > 0
+    
+    audio_chunks = []
+    async for audio in speech_mgr.speak_stream(sample_text_stream()):
+        audio_chunks.append(audio)
+        
+    assert len(audio_chunks) == 2
 
 @pytest.mark.asyncio
 async def test_full_end_to_end_pipeline():

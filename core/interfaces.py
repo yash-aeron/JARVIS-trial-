@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Callable, Awaitable
+from typing import Dict, Any, List, Optional, Callable, Awaitable, AsyncGenerator
 from core.models import EventModel, ToolMetadata, ToolRequestModel, ToolResultModel
 
 class IEventBus(ABC):
@@ -57,10 +57,20 @@ class ISTTProvider(ABC):
         """Transcribes raw audio bytes into text."""
         ...
 
+    @abstractmethod
+    async def transcribe_stream(self, audio_stream: AsyncGenerator[bytes, None], language: Optional[str] = None) -> AsyncGenerator[str, None]:
+        """Transcribes streaming audio chunks into text tokens asynchronously."""
+        ...
+
 class ITTSProvider(ABC):
     @abstractmethod
     async def synthesize(self, text: str, voice: Optional[str] = None, language: Optional[str] = None) -> bytes:
         """Synthesizes text into audio stream bytes."""
+        ...
+
+    @abstractmethod
+    async def synthesize_stream(self, text_stream: AsyncGenerator[str, None], voice: Optional[str] = None, language: Optional[str] = None) -> AsyncGenerator[bytes, None]:
+        """Synthesizes text stream tokens into audio chunks asynchronously."""
         ...
 
 class ITool(ABC):
