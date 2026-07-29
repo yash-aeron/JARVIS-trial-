@@ -200,6 +200,16 @@ class JARVISApp:
             runtime_context: ExecutionContextModel = context_mgr.get_snapshot()
             tool_results = await executor.execute_plan(plan, context=runtime_context)
             results = tool_results
+
+            # Step 3b: Executive Reflection & Fallback Re-planning
+            is_satisfied = exec_agent.reflect(utterance, results)
+            if not is_satisfied:
+                logger.warning(f"[JARVISApp] Reflection failed for '{utterance}'. Triggering fallback re-planning...")
+                fallback_planner: FallbackPlanner = self.container.resolve(FallbackPlanner)
+                fb_steps = fallback_planner.generate_fallback_steps(utterance)
+                fb_plan = ExecutionPlanModel(correlation_id=cid, user_goal=utterance, steps=fb_steps)
+                results = await executor.execute_plan(fb_plan, context=runtime_context)
+
             response = f"Sir, I have executed your request for '{utterance}'."
         else:
             response = f"Sir, I am online and listening: '{utterance}'."

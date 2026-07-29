@@ -30,12 +30,18 @@ class ExecutiveAgent:
         context: Optional[ExecutionContextModel] = None
     ) -> ExecutiveProcessResultModel:
         self.state_manager.transition_to(AssistantState.THINKING, "Executive Agent processing request", correlation_id=correlation_id)
-        
+
         intent_res: IntentResultModel = await self.intent_engine.classify(utterance, correlation_id, context)
-        decision: AgentDecisionModel = self.decision_engine.evaluate(utterance, intent_res.category.value, correlation_id)
-        
-        logger.info(f"Executive Decision [CID: {correlation_id}]: Confidence={decision.confidence:.2f}, Risk={decision.risk_level}, Intent={intent_res.category.value}")
-        
+        decision: AgentDecisionModel = self.decision_engine.evaluate(
+            utterance=utterance,
+            intent_category=intent_res.category.value,
+            correlation_id=correlation_id,
+            capabilities_needed=intent_res.capabilities_needed,
+            context=context
+        )
+
+        logger.info(f"Executive Decision [CID: {correlation_id}]: Confidence={decision.confidence:.2f}, Risk={decision.risk_level}, Allowed={decision.is_allowed}, Intent={intent_res.category.value}")
+
         if self.event_bus:
             payload = IntentDetectedEventData(
                 utterance=utterance,
@@ -51,10 +57,24 @@ class ExecutiveAgent:
                     sender="ExecutiveAgent"
                 )
             )
-            
+
         return ExecutiveProcessResultModel(
             utterance=utterance,
             correlation_id=correlation_id,
             intent=intent_res,
             decision=decision
         )
+
+    def reflect(self, user_goal: str, execution_results: list) -> bool:
+        """Reflection loop: Evaluate whether user goal was actually satisfied by execution results."""
+        if not execution_results:
+            logger.warning(f"[ExecutiveReflection] Goal '{user_goal}' yielded no execution results.")
+            return False
+
+        all_completed = all(getattr(r, "status", "") == "completed" for r in execution_results)
+        if not all_completed:
+            logger.warning(f"[ExecutiveReflection] Goal '{user_goal}' has incomplete or failed step executions.")
+            return False
+
+        logger.info(f"[ExecutiveReflection] Goal '{user_goal}' successfully satisfied.")
+        return True
