@@ -54,3 +54,19 @@ async def test_scenario_memory_store_and_recall():
     top_item, score = ranked[0]
     assert "Python 3.11" in top_item.content
     assert score > 3.0
+
+@pytest.mark.asyncio
+async def test_scenario_semantic_cosine_vector_recall():
+    """Scenario Test: Verifies vector cosine similarity search in MemoryManager."""
+    mem_mgr = MemoryManager(db_path="data/test_semantic_recall.db")
+    item1 = MemoryItemModel(content="NVIDIA RTX 3050 Ti graphics card has 4GB VRAM budget", tags=["gpu", "vram"], importance=4.0)
+    item2 = MemoryItemModel(content="Grocery list includes milk, bread, and eggs", tags=["grocery"], importance=1.0)
+    
+    mem_mgr.store(item1)
+    mem_mgr.store(item2)
+    
+    recalled = mem_mgr.semantic_recall(query_text="graphics card VRAM budget", top_k=1)
+    assert len(recalled) == 1
+    top_item, score = recalled[0]
+    assert "RTX 3050 Ti" in top_item.content
+    assert score > 4.0

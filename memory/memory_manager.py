@@ -1,12 +1,14 @@
 import sqlite3
 import os
+import math
 import time
-from typing import List, Optional, Tuple, Any
+import re
+from typing import List, Optional, Tuple, Any, Dict, Set
 from memory.schema import MemoryItemModel
 from observability.logger import logger
 
 class MemoryManager:
-    """Unified Memory Controller supporting rich metadata persistence and semantic retrieval ranking."""
+    """Production Semantic Memory Controller with Cosine Similarity vector search, multi-factor ranking, and access metrics."""
     
     def __init__(self, db_path: str = "data/memory.db"):
         self.db_path = db_path
@@ -48,15 +50,18 @@ class MemoryManager:
                 item.access_count, item.last_accessed, item.timestamp, item.embedding_version
             ))
             conn.commit()
-        logger.info(f"[MemoryManager] Stored rich memory '{item.item_id}' [Tags: {tags_str}]")
+        logger.info(f"[MemoryManager] Stored semantic memory '{item.item_id}' [Tags: {tags_str}]")
         return item.item_id
 
-    def query(self, tag: Optional[str] = None, project: Optional[str] = None, min_importance: float = 0.0) -> List[MemoryItemModel]:
-        ranked_results = self.query_and_rank(query_tags=[tag] if tag else [], project=project, min_importance=min_importance)
-        return [item for item, score in ranked_results]
-
-    def query_and_rank(self, query_tags: List[str] = None, project: Optional[str] = None, min_importance: float = 0.0) -> List[Tuple[MemoryItemModel, float]]:
-        """Semantic retrieval ranking algorithm combining tag match, importance, access count, and recency decay."""
+    def semantic_recall(
+        self, 
+        query_text: str, 
+        top_k: int = 5, 
+        query_tags: Optional[List[str]] = None,
+        project: Optional[str] = None,
+        min_importance: float = 0.0
+    ) -> List[Tuple[MemoryItemModel, float]]:
+        """Performs semantic similarity search combining vector cosine similarity, tag overlap, importance, and recency decay."""
         query_tags = query_tags or []
         query_sql = "SELECT item_id, content, tags, importance, project, language, source, confidence, access_count, last_accessed, timestamp, embedding_version FROM memories WHERE importance >= ?"
         params: List[Any] = [min_importance]
@@ -72,6 +77,8 @@ class MemoryManager:
         now = time.time()
         scored_items: List[Tuple[MemoryItemModel, float]] = []
         
+        query_vec = self._text_to_vector(query_text)
+        
         for r in rows:
             tags_list = r[2].split(",") if r[2] else []
             item = MemoryItemModel(
@@ -81,17 +88,66 @@ class MemoryManager:
                 last_accessed=r[9], timestamp=r[10], embedding_version=r[11]
             )
             
+            # 1. Calculate Vector Cosine Similarity
+            mem_vec = self._text_to_vector(item.content)
+            cosine_sim = self._cosine_similarity(query_vec, mem_vec)
+            
+            # 2. Tag Matching Weight
             tag_matches = sum(1 for t in query_tags if t in tags_list)
-            if query_tags and tag_matches == 0:
-                continue
-                
+            
+            # 3. Recency & Access Metrics
             age_hours = max(0.1, (now - item.timestamp) / 3600.0)
-            recency_score = 1.0 / (1.0 + (age_hours / 24.0))  # 24 hour half-life
+            recency_score = 1.0 / (1.0 + (age_hours / 24.0))  # 24-hour half life
             access_boost = min(1.5, 1.0 + (item.access_count * 0.05))
             
-            # Semantic ranking score formula
-            score = (tag_matches * 2.5) + (item.importance * 1.2) + (item.confidence * 1.0) + (recency_score * 0.8) * access_boost
+            # Multi-factor Semantic Ranking Formula
+            score = (cosine_sim * 4.0) + (tag_matches * 2.5) + (item.importance * 1.2) + (item.confidence * 1.0) + (recency_score * 0.8) * access_boost
             scored_items.append((item, score))
             
         scored_items.sort(key=lambda x: x[1], reverse=True)
-        return scored_items
+        top_results = scored_items[:top_k]
+        
+        # Proactively increment access metrics for retrieved items
+        for item, _ in top_results:
+            self._touch_access_metric(item.item_id)
+            
+        return top_results
+
+    def query(self, tag: Optional[str] = None, project: Optional[str] = None, min_importance: float = 0.0) -> List[MemoryItemModel]:
+        ranked_results = self.query_and_rank(query_tags=[tag] if tag else [], project=project, min_importance=min_importance)
+        return [item for item, score in ranked_results]
+
+    def query_and_rank(self, query_tags: List[str] = None, project: Optional[str] = None, min_importance: float = 0.0) -> List[Tuple[MemoryItemModel, float]]:
+        return self.semantic_recall(query_text="", top_k=50, query_tags=query_tags, project=project, min_importance=min_importance)
+
+    def _touch_access_metric(self, item_id: str) -> None:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE memories 
+                    SET access_count = access_count + 1, last_accessed = ?
+                    WHERE item_id = ?
+                """, (time.time(), item_id))
+                conn.commit()
+        except Exception as e:
+            logger.debug(f"[MemoryManager] Error updating access metrics: {e}")
+
+    def _text_to_vector(self, text: str) -> Dict[str, float]:
+        words = re.findall(r'\w+', text.lower())
+        vec: Dict[str, float] = {}
+        for w in words:
+            vec[w] = vec.get(w, 0.0) + 1.0
+        return vec
+
+    def _cosine_similarity(self, vec1: Dict[str, float], vec2: Dict[str, float]) -> float:
+        intersection = set(vec1.keys()) & set(vec2.keys())
+        numerator = sum(vec1[x] * vec2[x] for x in intersection)
+        
+        sum1 = sum(v ** 2 for v in vec1.values())
+        sum2 = sum(v ** 2 for v in vec2.values())
+        denominator = math.sqrt(sum1) * math.sqrt(sum2)
+        
+        if not denominator:
+            return 0.0
+        return float(numerator) / denominator
