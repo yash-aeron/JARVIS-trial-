@@ -1,7 +1,7 @@
 from typing import Dict, Any, List, Optional, Tuple
 from core.interfaces import ITool
 from core.models import ToolMetadata
-from tools.ranking_strategy import IRankingStrategy, ContextualRankingStrategy
+from tools.ranking_strategy import IRankingStrategy, ContextAwareRankingStrategy, CompositeRankingStrategy
 from observability.logger import logger
 
 class ToolRegistry:
@@ -10,7 +10,7 @@ class ToolRegistry:
     def __init__(self, ranking_strategy: Optional[IRankingStrategy] = None):
         self._tools: Dict[str, ITool] = {}
         self._capabilities_map: Dict[str, List[ITool]] = {}
-        self.ranking_strategy = ranking_strategy or ContextualRankingStrategy()
+        self.ranking_strategy = ranking_strategy or CompositeRankingStrategy()
 
     def register(self, tool: ITool) -> None:
         meta = tool.metadata

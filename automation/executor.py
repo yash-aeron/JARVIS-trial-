@@ -1,7 +1,7 @@
 import asyncio
 from typing import Dict, Any, Optional, List, Set
 from tools.registry import ToolRegistry
-from automation.action_queue import ActionQueue, ActionItemModel, ActionQueueState
+from automation.action_queue import ActionQueue
 from automation.undo_manager import UndoManager
 from state.state_manager import StateManager
 from state.states import AssistantState
@@ -43,11 +43,11 @@ class PlanExecutor:
             args=step.args
         )
         self.action_queue.enqueue(item)
-        item.state = ActionQueueState.RUNNING
+        item.state = "RUNNING"
         
         ranked_candidates = self.tool_registry.find_and_rank_by_capability(step.capability, context=context)
         if not ranked_candidates:
-            item.state = ActionQueueState.FAILED
+            item.state = "FAILED"
             item.error = f"No tools found for capability '{step.capability}'."
             return ToolResultModel(request_id=item.item_id, correlation_id=cid, status="failed", error=item.error)
             
@@ -82,11 +82,11 @@ class PlanExecutor:
                 tool_res = ToolResultModel(request_id=item.item_id, correlation_id=cid, status="failed", error=str(e))
                 
         if tool_res and tool_res.status == "completed":
-            item.state = ActionQueueState.COMPLETED
+            item.state = "COMPLETED"
             item.result = tool_res.result
             self.undo_manager.record(tool, tool_req, tool_res)
         else:
-            item.state = ActionQueueState.FAILED
+            item.state = "FAILED"
             item.error = tool_res.error if tool_res else "Failed execution"
             
         if self.event_bus:

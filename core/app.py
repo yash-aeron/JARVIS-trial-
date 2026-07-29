@@ -20,6 +20,8 @@ from speech.speech_manager import SpeechManager
 
 from brain.intent_engine import IntentEngine, IntentResultModel
 from brain.planner import Planner
+from brain.plan_validator import PlanValidator
+from brain.fallback_planner import FallbackPlanner
 from agent.executive import ExecutiveAgent, AgentDecisionModel
 
 from tools.registry import ToolRegistry
@@ -35,11 +37,7 @@ from system.mode_manager import ModeManager
 from plugins.plugin_manager import PluginManager
 from observability.logger import logger
 
-def bootstrap_container() -> DependencyContainer:
-    """Builds and wires the full dependency graph inside DependencyContainer via Config-Driven Provider Factories."""
-    container = DependencyContainer()
-    
-    # 1. Register Core Infrastructure Singletons & Factories
+def _register_foundation(container: DependencyContainer) -> None:
     settings = Settings()
     event_bus = AsyncEventBus()
     state_manager = StateManager(event_bus)
@@ -51,21 +49,18 @@ def bootstrap_container() -> DependencyContainer:
     container.register_singleton(StateManager, state_manager)
     container.register_singleton(ServiceManager, service_manager)
     container.register_singleton(PromptManager, prompt_manager)
-    
-    # 2. Configuration-Driven STT / TTS Provider Factories
+
+def _register_speech(container: DependencyContainer) -> None:
+    settings = container.resolve(Settings)
     stt_choice = settings.get("models.stt_provider", "whisper")
     tts_choice = settings.get("models.tts_provider", "edge-tts")
-    llm_choice = settings.get("models.llm_provider", "ollama")
     
     stt_provider = WhisperSTTProvider() if stt_choice == "whisper" else WhisperSTTProvider()
     tts_provider = EdgeTTSProvider() if tts_choice == "edge-tts" else EdgeTTSProvider()
-    llm_provider = OllamaLLMProvider() if llm_choice == "ollama" else OllamaLLMProvider()
     
     container.register_singleton(ISTTProvider, stt_provider)
     container.register_singleton(ITTSProvider, tts_provider)
-    container.register_singleton(ILLMProvider, llm_provider)
     
-    # 3. Register Language & Speech Services
     container.register_factory(LanguageManager, lambda c: LanguageManager(c.resolve(Settings)))
     container.register_factory(SpeechManager, lambda c: SpeechManager(
         stt=c.resolve(ISTTProvider),
@@ -75,11 +70,18 @@ def bootstrap_container() -> DependencyContainer:
         event_bus=c.resolve(IEventBus)
     ))
     
-    # Register all IService instances with ServiceManager
     service_mgr = container.resolve(ServiceManager)
     service_mgr.register_service(container.resolve(SpeechManager))
+
+def _register_brain(container: DependencyContainer) -> None:
+    settings = container.resolve(Settings)
+    llm_choice = settings.get("models.llm_provider", "ollama")
+    llm_provider = OllamaLLMProvider() if llm_choice == "ollama" else OllamaLLMProvider()
     
-    # 4. Register Intelligence & Executive Agent Factories
+    container.register_singleton(ILLMProvider, llm_provider)
+    container.register_singleton(PlanValidator, PlanValidator())
+    container.register_singleton(FallbackPlanner, FallbackPlanner())
+    
     container.register_factory(IntentEngine, lambda c: IntentEngine(c.resolve(ILLMProvider)))
     container.register_factory(ExecutiveAgent, lambda c: ExecutiveAgent(
         c.resolve(IntentEngine), 
@@ -87,13 +89,15 @@ def bootstrap_container() -> DependencyContainer:
         c.resolve(IEventBus)
     ))
     container.register_factory(Planner, lambda c: Planner(
-        c.resolve(ILLMProvider), 
-        c.resolve(StateManager), 
-        c.resolve(PromptManager),
-        c.resolve(IEventBus)
+        llm=c.resolve(ILLMProvider), 
+        state_manager=c.resolve(StateManager), 
+        prompt_manager=c.resolve(PromptManager),
+        validator=c.resolve(PlanValidator),
+        fallback_planner=c.resolve(FallbackPlanner),
+        event_bus=c.resolve(IEventBus)
     ))
-    
-    # 5. Register Tools, Skills & Automation
+
+def _register_automation(container: DependencyContainer) -> None:
     tool_reg = ToolRegistry()
     tool_reg.register(SystemControlTool())
     tool_reg.register(ApplicationLauncherTool())
@@ -107,13 +111,26 @@ def bootstrap_container() -> DependencyContainer:
         event_bus=c.resolve(IEventBus)
     ))
     container.register_factory(SkillEngine, lambda c: SkillEngine(c.resolve(ToolRegistry)))
-    
-    # 6. Register Auxiliary & Management Systems
+
+def _register_memory(container: DependencyContainer) -> None:
     container.register_singleton(MemoryManager, MemoryManager())
     container.register_singleton(ContextManager, ContextManager())
     container.register_singleton(SessionManager, SessionManager())
     container.register_singleton(ModeManager, ModeManager(initial_mode="Developer"))
+
+def _register_plugins(container: DependencyContainer) -> None:
     container.register_factory(PluginManager, lambda c: PluginManager(c))
+
+def bootstrap_container() -> DependencyContainer:
+    """Builds and wires the full dependency graph inside DependencyContainer via Modular Registration functions."""
+    container = DependencyContainer()
+    
+    _register_foundation(container)
+    _register_speech(container)
+    _register_brain(container)
+    _register_automation(container)
+    _register_memory(container)
+    _register_plugins(container)
     
     return container
 

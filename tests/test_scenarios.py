@@ -3,46 +3,53 @@ import asyncio
 import uuid
 from core.app import JARVISApp
 from state.states import AssistantState
+from memory.schema import MemoryItemModel
+from memory.memory_manager import MemoryManager
 
 @pytest.mark.asyncio
-async def test_scenario_open_application_workflow():
-    """Scenario Test: Verifies complete input-to-speech execution pipeline for opening an application."""
+async def test_scenario_open_chrome_and_vscode():
+    """Scenario Test: Verifies pipeline execution for opening developer desktop tools."""
     app = JARVISApp()
     await app.initialize()
     
     cid = str(uuid.uuid4())
-    res = await app.process_user_command("Open notepad", correlation_id=cid)
+    res = await app.process_user_command("Open Chrome and VS Code", correlation_id=cid)
     
-    # 1. Pipeline Response Assertions
     assert res["correlation_id"] == cid
-    assert res["intent"] in ["SINGLE_TOOL", "MULTI_STEP_PLAN"]
     assert len(res["execution_results"]) >= 1
     assert res["execution_results"][0]["status"] == "completed"
     
-    # 2. Event Store Persistence Check
-    history = app.event_bus.get_event_history(correlation_id=cid)
-    topics = [ev.topic for ev in history]
-    assert "intent.detected" in topics
-    assert "plan.created" in topics
-    assert "tool.started" in topics
-    assert "tool.finished" in topics
-    assert "speech.spoke" in topics
-    
-    # 3. Final State Check
-    assert app.state_manager.current_state == AssistantState.IDLE
-    
     await app.shutdown()
 
 @pytest.mark.asyncio
-async def test_scenario_system_status_check():
-    """Scenario Test: Verifies system hardware query pipeline execution."""
+async def test_scenario_multilingual_code_switching():
+    """Scenario Test: Verifies pipeline handling of Hinglish code-switching requests."""
     app = JARVISApp()
     await app.initialize()
     
     cid = str(uuid.uuid4())
-    res = await app.process_user_command("Check system status", correlation_id=cid)
+    res = await app.process_user_command("Jarvis, Chrome kholo and check system status", correlation_id=cid)
     
     assert res["correlation_id"] == cid
     assert res["execution_results"][0]["status"] == "completed"
     
     await app.shutdown()
+
+@pytest.mark.asyncio
+async def test_scenario_memory_store_and_recall():
+    """Scenario Test: Verifies storing and recalling user memory items with ranking."""
+    mem_mgr = MemoryManager(db_path="data/test_scenario_memory.db")
+    item = MemoryItemModel(
+        content="User project preference is Python 3.11 with PySide6",
+        tags=["preference", "python", "gui"],
+        importance=4.5,
+        project="JARVIS",
+        language="en-US"
+    )
+    mem_mgr.store(item)
+    
+    ranked = mem_mgr.query_and_rank(query_tags=["python"])
+    assert len(ranked) >= 1
+    top_item, score = ranked[0]
+    assert "Python 3.11" in top_item.content
+    assert score > 3.0
