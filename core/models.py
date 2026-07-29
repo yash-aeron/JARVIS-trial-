@@ -30,6 +30,15 @@ class PlannerContextModel(BaseModel):
     capabilities_needed: List[str] = Field(default_factory=list)
     execution_context: ExecutionContextModel = Field(default_factory=ExecutionContextModel)
 
+# Strongly Typed Tool Arguments
+class OpenApplicationArgs(BaseModel):
+    app_name: str
+    action: str = "launch"  # launch, focus, close
+    reuse_existing: bool = True
+
+class SystemControlArgs(BaseModel):
+    action: str = "get_status"  # get_status, set_volume, set_brightness
+
 class ToolMetadata(BaseModel):
     name: str
     description: str
