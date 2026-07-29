@@ -1,35 +1,51 @@
-# JARVIS Architecture Guide
+# JARVIS Technical Architecture & Design Document
 
-## Overview
+## Architectural Overview
 
-JARVIS is a local-first, event-driven, modular AI Operating System Assistant designed according to SOLID principles, Dependency Injection, and strict decoupling.
+JARVIS is a local-first, event-driven AI Operating System Assistant built adhering strictly to SOLID principles, interface segregation, and type-based Dependency Injection.
 
-## Core Architectural Principles
+---
 
-1. **Subsystem Replaceability**: Every subsystem communicates exclusively through abstract interfaces (`core/interfaces.py`). Swapping Ollama with llama.cpp, Whisper with Parakeet, or ChromaDB with FAISS requires zero changes to business logic.
-2. **Event-Driven & Event-Sourced**: Subsystems publish and subscribe to events on `AsyncEventBus`. All events are recorded with a unified **Correlation ID** for full request lifecycle tracing.
-3. **Executive Agent & Multi-Step Planner**: Conversation and planning are decoupled. The Executive Agent decides what resources are needed, while the Planner produces pure `ExecutionPlan` data structures executed asynchronously by `PlanExecutor` through `ActionQueue`.
-4. **Global State Machine**: `StateManager` tracks assistant state transitions (`IDLE`, `LISTENING`, `THINKING`, `PLANNING`, `EXECUTING`, `SPEAKING`, `ERROR`).
+## High-Level Execution Pipeline
 
-## High-Level Architecture Diagram
-
-```
-User Voice / Text Input
+```text
+User Input (Voice / Text)
         │
         ▼
-   SpeechManager (VAD / STT) ───[Event: speech.recognized (Correlation ID)]───► AsyncEventBus
-                                                                                      │
-        ┌─────────────────────────────────────────────────────────────────────────────┘
+   SpeechManager (Streaming / Interruptible STT) ──► EventBus (Auto-Persisted to SQLite)
+                                                             │
+        ┌────────────────────────────────────────────────────┘
         ▼
- ExecutiveAgent (Decision Engine: Planning, Memory, Vision, Search)
+  ExecutiveAgent (Decision Engine: Confidence, Risk Level, Planning, Memory, Search)
         │
-        ├──► Simple Conversation ──► ResponseGenerator ──► SpeechManager (TTS)
+        ├──► Conversational Query ──► ResponseGenerator ──► SpeechManager (TTS)
         │
         └──► Complex Multi-Step Goal
                      │
                      ▼
-                  Planner (Generates Pydantic ExecutionPlan)
+                  Planner (PromptManager ──► LLM JSON ──► PlanValidator)
                      │
                      ▼
-                PlanExecutor ──► ActionQueue (PENDING/RUNNING/COMPLETED) ──► ToolRegistry (Capability Discovery)
+            PlanExecutor (Parallel Execution & Composite Ranking) ──► ActionQueue ──► ToolRegistry
 ```
+
+---
+
+## Core Component Contracts
+
+### 1. Dependency Container (`core/container.py`)
+- Type-safe DI container requiring explicit Class and Interface types (`container.resolve(ISTTProvider)`).
+
+### 2. Service Manager (`core/service_manager.py`)
+- Lifecycle tracking with `ServiceState` enum (`NEW`, `STARTING`, `RUNNING`, `DEGRADED`, `STOPPING`, `STOPPED`, `FAILED`).
+- `CircuitBreaker` tracking consecutive failures and cooldown timers.
+
+### 3. Async Event Bus & Persistence (`core/event_bus.py`)
+- Middleware chain (`add_middleware()`), automatic SQLite event persistence (`data/event_store.db`), and session event replay (`replay_events()`).
+
+### 4. Pluggable Composite Ranking (`tools/ranking_strategy.py`)
+- `CompositeRankingStrategy` evaluating Runtime Context, Permission Level, Performance Speed, and Historical Success Rate.
+
+### 5. Memory & Context Manager (`memory/` & `context/`)
+- `MemoryItemModel` with rich metadata (`importance`, `timestamp`, `project`, `language`, `source`, `confidence`, `access_count`, `last_accessed`, `embedding_version`).
+- `ContextManager` querying Windows APIs for active window title (`GetForegroundWindow`) and clipboard text.
