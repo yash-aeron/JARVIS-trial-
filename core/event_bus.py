@@ -69,3 +69,23 @@ class AsyncEventBus(IEventBus):
         events = self.get_event_history(correlation_id=correlation_id)
         for ev in events:
             await handler(ev)
+
+    async def replay_from_snapshot(self, state_name: str, handler: Callable[[EventModel], Awaitable[None]]) -> Optional[str]:
+        """Point-in-Time event replay starting from the latest state snapshot rather than zero."""
+        snapshot = self.event_store.get_latest_snapshot(state_name)
+        if not snapshot:
+            logger.info(f"[AsyncEventBus] No snapshot found for '{state_name}'. Replaying all events.")
+            all_events = self.get_event_history(limit=500)
+            for ev in all_events:
+                await handler(ev)
+            return None
+
+        logger.info(f"[AsyncEventBus] Replaying events from snapshot '{snapshot.snapshot_id}' (Last Event ID: {snapshot.last_event_id}).")
+        all_events = self.get_event_history(limit=500)
+        found_start = False
+        for ev in all_events:
+            if found_start:
+                await handler(ev)
+            elif ev.event_id == snapshot.last_event_id:
+                found_start = True
+        return snapshot.snapshot_id

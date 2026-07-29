@@ -3,7 +3,7 @@ import asyncio
 import uuid
 from core.container import DependencyContainer
 from core.app import bootstrap_container
-from core.interfaces import IEventBus
+from core.interfaces import IEventBus, ISTTProvider, ITTSProvider
 from core.models import BenchmarkResultModel, EventModel, SpeechRecognizedEventData, ExecutionPlanModel, PlanStepModel
 from memory.memory_manager import MemoryManager
 from memory.schema import MemoryItemModel
@@ -58,13 +58,29 @@ class SystemBenchmarking:
         await executor.execute_plan(plan)
         executor_lat = (time.perf_counter() - t0) * 1000.0
         
+        # 7. Measure STT & TTS Pipeline Latencies
+        stt_provider = container.resolve(ISTTProvider) if container.resolve(ISTTProvider) else None
+        tts_provider = container.resolve(ITTSProvider) if container.resolve(ITTSProvider) else None
+
+        t0 = time.perf_counter()
+        if stt_provider:
+            await stt_provider.transcribe(b"\x00" * 3200)
+        stt_lat = (time.perf_counter() - t0) * 1000.0
+
+        t0 = time.perf_counter()
+        if tts_provider:
+            await tts_provider.synthesize("Benchmarking system output")
+        tts_lat = (time.perf_counter() - t0) * 1000.0
+
         res = BenchmarkResultModel(
             startup_time_ms=round(startup_lat, 3),
             planner_latency_ms=round(planner_lat, 3),
             executor_latency_ms=round(executor_lat, 3),
             event_bus_latency_ms=round(event_bus_lat, 3),
             memory_retrieval_latency_ms=round(memory_lat, 3),
-            tool_execution_latency_ms=round(tool_lat, 3)
+            tool_execution_latency_ms=round(tool_lat, 3),
+            stt_latency_ms=round(stt_lat, 3),
+            tts_latency_ms=round(tts_lat, 3)
         )
         logger.info(f"Benchmarking completed: {res.model_dump()}")
         return res

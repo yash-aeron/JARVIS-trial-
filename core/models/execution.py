@@ -46,4 +46,5 @@ class UndoRecordModel(BaseModel):
     request_id: str
     correlation_id: str
     tool_name: str
+    event_id: Optional[str] = None
     timestamp: float = Field(default_factory=lambda: time.time())

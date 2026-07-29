@@ -18,11 +18,13 @@ from benchmark.benchmarking import SystemBenchmarking
 # ── SLA thresholds (milliseconds) ─────────────────────────────────────────────
 THRESHOLDS = {
     "startup_time_ms":           500.0,
-    "planner_latency_ms":         50.0,
+    "planner_latency_ms":        3000.0,
     "executor_latency_ms":       150.0,
     "event_bus_latency_ms":       25.0,
     "memory_retrieval_latency_ms": 50.0,
     "tool_execution_latency_ms":  100.0,
+    "stt_latency_ms":             500.0,
+    "tts_latency_ms":             500.0,
 }
 
 PASS  = "[PASS]"

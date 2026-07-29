@@ -18,6 +18,8 @@ class BenchmarkResultModel(BaseModel):
     event_bus_latency_ms: float = 0.0
     memory_retrieval_latency_ms: float = 0.0
     tool_execution_latency_ms: float = 0.0
+    stt_latency_ms: float = 0.0
+    tts_latency_ms: float = 0.0
 
 class ToolSelectionEvalModel(BaseModel):
     predicted_tool: str
