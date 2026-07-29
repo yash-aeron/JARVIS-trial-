@@ -6,10 +6,12 @@ from core.models import EventModel, SpeechRecognizedEventData, SpeechSpokeEventD
 from state.state_manager import StateManager
 from state.states import AssistantState
 from language.manager import LanguageManager
+from speech.vad import SileroVAD
+from speech.wake_word import WakeWordDetector
 from observability.logger import logger
 
 class SpeechManager(IService):
-    """Speech Orchestrator driving STT/TTS providers with support for streaming audio transcription and speech output."""
+    """Speech Orchestrator driving Faster-Whisper, Silero VAD, Wake-Word Detection, and STT/TTS streaming pipelines."""
     
     def __init__(
         self, 
@@ -24,13 +26,15 @@ class SpeechManager(IService):
         self._language_manager = language_manager
         self._state_manager = state_manager
         self._event_bus = event_bus
+        self.vad = SileroVAD(threshold=0.5)
+        self.wake_word_detector = WakeWordDetector(keyphrase="jarvis")
 
     @property
     def name(self) -> str:
         return "SpeechManager"
 
     async def start(self) -> None:
-        logger.info("SpeechManager started.")
+        logger.info("SpeechManager started with Silero VAD and Wake-Word Detection online.")
 
     async def stop(self) -> None:
         logger.info("SpeechManager stopped.")
@@ -38,11 +42,26 @@ class SpeechManager(IService):
     async def health_check(self) -> bool:
         return True
 
+    def interrupt(self) -> None:
+        """Interrupts ongoing speech transcription or synthesis."""
+        if hasattr(self._stt, "interrupt"):
+            self._stt.interrupt()
+        logger.info("[SpeechManager] Speech pipeline interrupted.")
+
     async def process_speech_input(self, audio_data: bytes, correlation_id: Optional[str] = None) -> str:
         cid = correlation_id or str(uuid.uuid4())
         self._state_manager.transition_to(AssistantState.LISTENING, "Speech input received", correlation_id=cid)
         
+        # 1. Silero VAD check
+        if not self.vad.is_speech(audio_data):
+            logger.debug("[SpeechManager] Audio snippet ignored by Silero VAD (no speech detected).")
+            self._state_manager.transition_to(AssistantState.IDLE, "No speech activity", correlation_id=cid)
+            return ""
+            
         text = await self._stt.transcribe(audio_data, language=self._language_manager.active_language)
+        
+        # 2. Wake-word check
+        is_wake = self.wake_word_detector.detect_wake_word(text)
         lang_res = self._language_manager.process_utterance(text)
         
         if self._event_bus:
