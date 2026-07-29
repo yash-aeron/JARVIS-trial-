@@ -26,7 +26,7 @@ from brain.plan_optimizer import PlanOptimizer
 from agent.executive import ExecutiveAgent, AgentDecisionModel
 
 from tools.registry import ToolRegistry
-from tools.system_tools import SystemControlTool, ApplicationLauncherTool
+from tools.system_tools import SystemControlTool, ApplicationLauncherTool, ContextReaderTool
 from automation.undo_manager import UndoManager
 from automation.executor import PlanExecutor
 from skills.skill_engine import SkillEngine
@@ -100,12 +100,20 @@ def _register_brain(container: DependencyContainer) -> None:
         event_bus=c.resolve(IEventBus)
     ))
 
+def _register_memory(container: DependencyContainer) -> None:
+    container.register_singleton(MemoryManager, MemoryManager())
+    container.register_singleton(ContextManager, ContextManager())
+    container.register_singleton(SessionManager, SessionManager())
+    container.register_singleton(ModeManager, ModeManager(initial_mode="Developer"))
+
 def _register_automation(container: DependencyContainer) -> None:
+    context_mgr = container.resolve(ContextManager)
     tool_reg = ToolRegistry()
     tool_reg.register(SystemControlTool())
     tool_reg.register(ApplicationLauncherTool())
+    tool_reg.register(ContextReaderTool(context_manager=context_mgr))
     container.register_singleton(ToolRegistry, tool_reg)
-    
+
     container.register_singleton(UndoManager, UndoManager())
     container.register_factory(PlanExecutor, lambda c: PlanExecutor(
         tool_registry=c.resolve(ToolRegistry),
@@ -115,27 +123,22 @@ def _register_automation(container: DependencyContainer) -> None:
     ))
     container.register_factory(SkillEngine, lambda c: SkillEngine(c.resolve(ToolRegistry)))
 
-def _register_memory(container: DependencyContainer) -> None:
-    container.register_singleton(MemoryManager, MemoryManager())
-    container.register_singleton(ContextManager, ContextManager())
-    container.register_singleton(SessionManager, SessionManager())
-    container.register_singleton(ModeManager, ModeManager(initial_mode="Developer"))
-
 def _register_plugins(container: DependencyContainer) -> None:
     container.register_factory(PluginManager, lambda c: PluginManager(c))
 
 def bootstrap_container() -> DependencyContainer:
     """Builds and wires the full dependency graph inside DependencyContainer via Modular Registration functions."""
     container = DependencyContainer()
-    
+
     _register_foundation(container)
     _register_speech(container)
     _register_brain(container)
+    _register_memory(container)        # must precede automation (ContextReaderTool needs ContextManager)
     _register_automation(container)
-    _register_memory(container)
     _register_plugins(container)
-    
+
     return container
+
 
 class JARVISApp:
     """Master Application Orchestrator resolved directly from DependencyContainer."""
