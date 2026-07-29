@@ -1,14 +1,15 @@
 import asyncio
 import uuid
 from typing import Optional, Dict, Any
-from core.interfaces import IService, ISTTProvider, ITTSProvider, IEventBus, EventModel
+from core.interfaces import IService, ISTTProvider, ITTSProvider, IEventBus
+from core.models import EventModel, SpeechRecognizedEventData, SpeechSpokeEventData
 from state.state_manager import StateManager
 from state.states import AssistantState
 from language.manager import LanguageManager
 from observability.logger import logger
 
 class SpeechManager(IService):
-    """Speech Orchestrator driving VAD, WakeWord, STT, TTS with Correlation IDs."""
+    """Speech Orchestrator driving VAD, WakeWord, STT, TTS with Correlation IDs and Typed Event Payloads."""
     
     def __init__(
         self, 
@@ -45,11 +46,12 @@ class SpeechManager(IService):
         lang_res = self._language_manager.process_utterance(text)
         
         if self._event_bus:
+            payload = SpeechRecognizedEventData(text=text, language_details=lang_res)
             await self._event_bus.publish(
                 EventModel(
                     correlation_id=cid,
                     topic="speech.recognized",
-                    data={"text": text, "language_details": lang_res},
+                    data=payload.model_dump(),
                     sender="SpeechManager"
                 )
             )
@@ -64,11 +66,12 @@ class SpeechManager(IService):
         audio_bytes = await self._tts.synthesize(text, voice=voice, language=language)
         
         if self._event_bus:
+            payload = SpeechSpokeEventData(text=text, voice=voice, audio_length=len(audio_bytes))
             await self._event_bus.publish(
                 EventModel(
                     correlation_id=cid,
                     topic="speech.spoke",
-                    data={"text": text, "voice": voice, "audio_length": len(audio_bytes)},
+                    data=payload.model_dump(),
                     sender="SpeechManager"
                 )
             )

@@ -1,9 +1,10 @@
-from typing import Dict, Any, List, Optional
-from core.interfaces import ITool, ToolMetadata, ToolRequestModel, ToolResultModel
+from typing import Dict, Any, List, Optional, Tuple
+from core.interfaces import ITool
+from core.models import ToolMetadata
 from observability.logger import logger
 
 class ToolRegistry:
-    """Registry managing strongly-typed tools with Capability Discovery support."""
+    """Registry managing strongly-typed tools with ranked Capability Discovery scoring."""
     
     def __init__(self):
         self._tools: Dict[str, ITool] = {}
@@ -25,11 +26,31 @@ class ToolRegistry:
         return self._tools.get(name)
 
     def find_by_capability(self, capability: str) -> List[ITool]:
-        """Capability Discovery mechanism decoupling tool names from intent/planner."""
         return self._capabilities_map.get(capability, [])
 
+    def find_and_rank_by_capability(self, capability: str, context: Optional[Dict[str, Any]] = None) -> List[Tuple[ITool, float]]:
+        """Ranks candidate tools for a capability by matching score, permission suitability, and specialization."""
+        candidates = self._capabilities_map.get(capability, [])
+        scored_candidates: List[Tuple[ITool, float]] = []
+        
+        for tool in candidates:
+            score = 0.5  # Base candidate score
+            meta = tool.metadata
+            
+            # Exact primary capability specialization bonus
+            if meta.capabilities and meta.capabilities[0] == capability:
+                score += 0.3
+                
+            # Permission score adjustment (LOW/MEDIUM preferred for safety)
+            if meta.permission_level in ["LOW", "MEDIUM"]:
+                score += 0.15
+            elif meta.permission_level == "HIGH":
+                score += 0.05
+                
+            scored_candidates.append((tool, min(1.0, score)))
+            
+        scored_candidates.sort(key=lambda item: item[1], reverse=True)
+        return scored_candidates
+
     def list_all(self) -> List[Dict[str, Any]]:
-        return [
-            t.metadata.model_dump()
-            for t in self._tools.values()
-        ]
+        return [t.metadata.model_dump() for t in self._tools.values()]

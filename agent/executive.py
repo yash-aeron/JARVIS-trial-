@@ -3,7 +3,8 @@ from agent.decision_engine import DecisionEngine, AgentDecisionModel
 from brain.intent_engine import IntentEngine, IntentResultModel
 from state.state_manager import StateManager
 from state.states import AssistantState
-from core.interfaces import IEventBus, EventModel
+from core.interfaces import IEventBus
+from core.models import EventModel
 from observability.logger import logger
 
 class ExecutiveAgent:
@@ -21,7 +22,7 @@ class ExecutiveAgent:
         intent_res: IntentResultModel = await self.intent_engine.classify(utterance, correlation_id, context)
         decision: AgentDecisionModel = self.decision_engine.evaluate(utterance, intent_res.category.value, correlation_id)
         
-        logger.info(f"Executive Decision [CID: {correlation_id}]: Intent={intent_res.category.value}, Decision={decision.model_dump()}")
+        logger.info(f"Executive Decision [CID: {correlation_id}]: Confidence={decision.confidence:.2f}, Risk={decision.risk_level}, Intent={intent_res.category.value}")
         
         if self.event_bus:
             await self.event_bus.publish(

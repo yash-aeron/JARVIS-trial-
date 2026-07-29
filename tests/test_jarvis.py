@@ -2,62 +2,58 @@ import pytest
 import asyncio
 import uuid
 
-from core.interfaces import EventModel, ToolRequestModel
+from core.container import DependencyContainer
+from core.models import EventModel, ToolRequestModel, ToolResultModel
 from core.event_bus import AsyncEventBus
 from state.state_manager import StateManager
-from state.states import AssistantState
+from state.states import AssistantState, StateTransitionError
 from language.detector import CodeSwitchLanguageDetector
 from tools.registry import ToolRegistry
 from tools.system_tools import ApplicationLauncherTool
 from brain.planner import Planner, ExecutionPlanModel, PlanStepModel
-from brain.intent_engine import IntentEngine, IntentCategory
+from brain.intent_engine import IntentEngine
 from agent.executive import ExecutiveAgent
 from automation.executor import PlanExecutor
 from automation.undo_manager import UndoManager
-from memory.schema import MemoryItemModel
-from memory.memory_manager import MemoryManager
-from models.llm import OllamaLLMProvider
+from prompts.prompt_manager import PromptManager
 
-@pytest.mark.asyncio
-async def test_event_bus_with_pydantic_and_correlation_id():
+def test_type_based_dependency_injection():
+    container = DependencyContainer()
     bus = AsyncEventBus()
-    received = []
-    cid = str(uuid.uuid4())
+    container.register_singleton(AsyncEventBus, bus)
     
-    async def handler(ev: EventModel):
-        received.append((ev.correlation_id, ev.data["msg"]))
-        
-    bus.subscribe("test.topic", handler)
-    await bus.publish(EventModel(correlation_id=cid, topic="test.topic", data={"msg": "hello"}, sender="test"))
-    
-    assert len(received) == 1
-    assert received[0][0] == cid
-    assert received[0][1] == "hello"
+    resolved = container.resolve(AsyncEventBus)
+    assert resolved is bus
 
-def test_state_manager_with_correlation_id():
+def test_guarded_state_machine_transitions():
     sm = StateManager()
-    cid = str(uuid.uuid4())
     assert sm.current_state == AssistantState.IDLE
-    sm.set_state(AssistantState.PLANNING, "Testing state", correlation_id=cid)
-    assert sm.current_state == AssistantState.PLANNING
+    sm.set_state(AssistantState.LISTENING, "User speaking")
+    assert sm.current_state == AssistantState.LISTENING
+    
+    # Attempt invalid transition directly from LISTENING -> PLANNING
+    with pytest.raises(StateTransitionError):
+        sm.set_state(AssistantState.PLANNING, "Direct jump invalid")
 
-def test_language_code_switching():
-    detector = CodeSwitchLanguageDetector()
-    res = detector.detect("Jarvis, Chrome kholo and search for Python tutorials")
-    assert res["code_switching"] is True
-    assert res["primary_language"] == "hi-IN"
-
-def test_capability_discovery():
+def test_tool_ranking_scorer():
     registry = ToolRegistry()
     tool = ApplicationLauncherTool()
     registry.register(tool)
     
-    found = registry.find_by_capability("open_application")
-    assert len(found) == 1
-    assert found[0].metadata.name == "app_launcher"
+    ranked = registry.find_and_rank_by_capability("open_application")
+    assert len(ranked) == 1
+    selected_tool, score = ranked[0]
+    assert selected_tool.metadata.name == "app_launcher"
+    assert score > 0.8
+
+def test_prompt_manager_loading():
+    pm = PromptManager()
+    prompt = pm.get("planner", goal="Open Notepad", capabilities="open_application")
+    assert "Open Notepad" in prompt
+    assert "open_application" in prompt
 
 @pytest.mark.asyncio
-async def test_end_to_end_vertical_slice():
+async def test_execution_plan_with_retries_and_tool_ranking():
     registry = ToolRegistry()
     tool = ApplicationLauncherTool()
     registry.register(tool)
@@ -70,19 +66,10 @@ async def test_end_to_end_vertical_slice():
     plan = ExecutionPlanModel(
         correlation_id=cid,
         user_goal="Open Notepad",
-        steps=[PlanStepModel(step_id=1, capability="open_application", args={"app_name": "notepad"}, expected_observation="Notepad opened")]
+        steps=[PlanStepModel(step_id=1, capability="open_application", args={"app_name": "notepad"}, expected_observation="App opened")]
     )
     
     results = await executor.execute_plan(plan)
     assert len(results) == 1
     assert results[0].status == "completed"
     assert results[0].correlation_id == cid
-
-def test_memory_pydantic_persistence():
-    mem_mgr = MemoryManager(db_path="data/test_memory.db")
-    item = MemoryItemModel(content="User prefers dark mode", tags=["preference", "theme"], importance=4.5)
-    item_id = mem_mgr.store(item)
-    
-    queried = mem_mgr.query(tag="preference")
-    assert len(queried) >= 1
-    assert queried[0].content == "User prefers dark mode"

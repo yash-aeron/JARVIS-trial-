@@ -1,16 +1,6 @@
-import uuid
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Callable, Awaitable
-from pydantic import BaseModel, Field
-from datetime import datetime
-
-class EventModel(BaseModel):
-    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    correlation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    topic: str
-    sender: str
-    timestamp: float = Field(default_factory=lambda: datetime.now().timestamp())
-    data: Dict[str, Any] = Field(default_factory=dict)
+from core.models import EventModel, ToolMetadata, ToolRequestModel, ToolResultModel
 
 class IEventBus(ABC):
     @abstractmethod
@@ -61,28 +51,6 @@ class ITTSProvider(ABC):
     @abstractmethod
     async def synthesize(self, text: str, voice: Optional[str] = None, language: Optional[str] = None) -> bytes:
         pass
-
-class ToolMetadata(BaseModel):
-    name: str
-    description: str
-    capabilities: List[str]
-    permission_level: str  # LOW, MEDIUM, HIGH, CRITICAL
-    args_schema: Dict[str, Any] = Field(default_factory=dict)
-    version: str = "1.0.0"
-
-class ToolRequestModel(BaseModel):
-    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    correlation_id: str
-    capability: str
-    tool_name: Optional[str] = None
-    args: Dict[str, Any] = Field(default_factory=dict)
-
-class ToolResultModel(BaseModel):
-    request_id: str
-    correlation_id: str
-    status: str  # "completed", "failed", "undone"
-    result: Dict[str, Any] = Field(default_factory=dict)
-    error: Optional[str] = None
 
 class ITool(ABC):
     @property

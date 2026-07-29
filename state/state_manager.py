@@ -1,11 +1,13 @@
 import asyncio
 import uuid
 from typing import Callable, List, Optional
-from state.states import AssistantState
-from core.interfaces import IEventBus, EventModel
+from state.states import AssistantState, ALLOWED_TRANSITIONS, StateTransitionError
+from core.interfaces import IEventBus
+from core.models import EventModel, StateChangedEventData
+from observability.logger import logger
 
 class StateManager:
-    """Centralized Assistant State Machine manager publishing EventModel with correlation ID."""
+    """Guarded Assistant State Machine manager enforcing transition safety."""
     
     def __init__(self, event_bus: Optional[IEventBus] = None):
         self._current_state: AssistantState = AssistantState.IDLE
@@ -21,7 +23,14 @@ class StateManager:
         if old_state == new_state:
             return
             
+        allowed_next = ALLOWED_TRANSITIONS.get(old_state, [])
+        if new_state not in allowed_next:
+            err_msg = f"Invalid state transition attempted: {old_state.name} -> {new_state.name} (Reason: {reason})"
+            logger.error(err_msg)
+            raise StateTransitionError(err_msg)
+            
         self._current_state = new_state
+        logger.info(f"State transition: {old_state.name} -> {new_state.name} [{reason}]")
         
         for subscriber in self._subscribers:
             try:
@@ -30,12 +39,13 @@ class StateManager:
                 pass
                 
         if self._event_bus:
+            payload = StateChangedEventData(old_state=old_state.name, new_state=new_state.name, reason=reason)
             asyncio.create_task(
                 self._event_bus.publish(
                     EventModel(
                         correlation_id=correlation_id or str(uuid.uuid4()),
                         topic="system.state_changed",
-                        data={"old_state": old_state.name, "new_state": new_state.name, "reason": reason},
+                        data=payload.model_dump(),
                         sender="StateManager"
                     )
                 )
