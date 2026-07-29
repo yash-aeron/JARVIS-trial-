@@ -7,6 +7,15 @@ from benchmark.benchmarking import SystemBenchmarking
 from evaluation.evaluator import QualityEvaluator
 from observability.logger import logger
 
+BENCHMARK_LABELS = {
+    "startup_time_ms":             "System Startup Time",
+    "planner_latency_ms":          "Planner Latency",
+    "executor_latency_ms":         "Executor Latency",
+    "event_bus_latency_ms":        "Event Bus Latency",
+    "memory_retrieval_latency_ms": "Memory Retrieval Latency",
+    "tool_execution_latency_ms":   "Tool Execution Latency",
+}
+
 async def run_cli_loop(app: JARVISApp):
     await app.initialize()
     print("\n" + "="*60)
@@ -31,12 +40,13 @@ async def run_cli_loop(app: JARVISApp):
 async def run_benchmarks():
     suite = SystemBenchmarking()
     results = await suite.run_all_benchmarks()
-    print("\n" + "="*50)
+    data = results.model_dump()
+    print("\n" + "="*58)
     print("  JARVIS Benchmarking Suite Results")
-    print("="*50)
-    for k, v in results.model_dump().items():
-        print(f"  - {k}: {v}")
-    print("="*50 + "\n")
+    print("="*58)
+    for key, label in BENCHMARK_LABELS.items():
+        print(f"  - {label:<32} {data.get(key, 0.0):>8.3f} ms")
+    print("="*58 + "\n")
 
 def run_evaluations():
     evaluator = QualityEvaluator()
@@ -54,12 +64,17 @@ def main():
     parser.add_argument("--cli", action="store_true", help="Launch JARVIS in interactive CLI mode")
     parser.add_argument("--gui", action="store_true", help="Launch PySide6 Desktop GUI Dashboard")
     parser.add_argument("--benchmark", action="store_true", help="Run system benchmarking suite")
+    parser.add_argument("--ci-benchmark", action="store_true", help="Run CI benchmark suite with SLA threshold assertions")
     parser.add_argument("--eval", action="store_true", help="Run automated quality evaluation suite")
     
     args = parser.parse_args()
     
     if args.benchmark:
         asyncio.run(run_benchmarks())
+    elif getattr(args, 'ci_benchmark', False):
+        import subprocess
+        result = subprocess.run([sys.executable, "benchmark/benchmark_ci.py"])
+        sys.exit(result.returncode)
     elif args.eval:
         run_evaluations()
     elif args.gui:

@@ -20,6 +20,8 @@ ALLOWED_TRANSITIONS: Dict[AssistantState, List[AssistantState]] = {
         AssistantState.WAKE_WORD_DETECTED, 
         AssistantState.LISTENING, 
         AssistantState.THINKING, 
+        AssistantState.PLANNING,
+        AssistantState.EXECUTING,
         AssistantState.SPEAKING,
         AssistantState.ERROR
     ],

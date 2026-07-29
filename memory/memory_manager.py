@@ -34,6 +34,19 @@ class MemoryManager:
                     embedding_version TEXT
                 )
             """)
+            
+            # Migration check: Ensure all columns exist if table was created in an earlier session schema
+            cursor.execute("PRAGMA table_info(memories)")
+            existing_cols = {col[1] for col in cursor.fetchall()}
+            required_cols = {
+                "project": "TEXT", "language": "TEXT", "source": "TEXT",
+                "confidence": "REAL", "access_count": "INTEGER",
+                "last_accessed": "REAL", "embedding_version": "TEXT"
+            }
+            for col_name, col_type in required_cols.items():
+                if col_name not in existing_cols:
+                    cursor.execute(f"ALTER TABLE memories ADD COLUMN {col_name} {col_type}")
+                    
             conn.commit()
 
     def store(self, item: MemoryItemModel) -> str:

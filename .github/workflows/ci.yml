@@ -1,0 +1,42 @@
+name: JARVIS CI — Tests, Benchmarks & Quality Evaluation
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  ci:
+    name: Run Full CI Pipeline
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      # ── Checkout & Python setup ──────────────────────────────────────────────
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      # ── Unit & Integration Tests ─────────────────────────────────────────────
+      - name: Run Pytest Test Suite
+        run: python -m pytest tests/ -v --tb=short
+
+      # ── Quality Evaluation ───────────────────────────────────────────────────
+      - name: Run Planning & Tool Quality Evaluation
+        run: python main.py --eval
+
+      # ── Benchmark Suite with SLA Thresholds ─────────────────────────────────
+      - name: Run Latency Benchmark Suite (with SLA threshold check)
+        run: python benchmark/benchmark_ci.py
