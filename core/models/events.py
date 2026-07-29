@@ -52,8 +52,12 @@ class EventModel(BaseModel):
     topic: str
     sender: str
     timestamp: float = Field(default_factory=lambda: datetime.now().timestamp())
-    payload: BaseModel = Field(default_factory=GenericEventData)
+    payload: Any = Field(default_factory=GenericEventData)
 
     @property
     def data(self) -> Dict[str, Any]:
-        return self.payload.model_dump()
+        if isinstance(self.payload, BaseModel):
+            return self.payload.model_dump()
+        elif isinstance(self.payload, dict):
+            return self.payload
+        return {"value": str(self.payload)}

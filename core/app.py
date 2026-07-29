@@ -181,8 +181,8 @@ class JARVISApp:
         
         # Step 1: Executive Agent Processing
         executive_res = await exec_agent.process(utterance, correlation_id=cid)
-        intent: IntentResultModel = executive_res["intent"]
-        decision: AgentDecisionModel = executive_res["decision"]
+        intent: IntentResultModel = executive_res.intent
+        decision: AgentDecisionModel = executive_res.decision
         
         results: List[ToolResultModel] = []
         if decision.needs_clarification:
