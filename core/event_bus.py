@@ -1,38 +1,20 @@
-import os
 import asyncio
-import sqlite3
-from typing import Dict, List, Callable, Awaitable, Optional, Any
+from typing import Dict, List, Callable, Awaitable, Optional
 from core.interfaces import IEventBus
 from core.models import EventModel
+from core.event_store import EventStore
 from observability.logger import logger
 
 EventMiddleware = Callable[[EventModel], Awaitable[EventModel]]
 
 class AsyncEventBus(IEventBus):
-    """Async Event Bus supporting Middleware, Versioning, Auto-Persistence, and Session Event Replay."""
+    """Async Event Bus supporting Middleware, Versioning, Auto-Persistence via EventStore, and Session Event Replay."""
     
-    def __init__(self, db_path: str = "data/event_store.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = "data/event_store.db", event_store: Optional[EventStore] = None):
+        self.event_store = event_store or EventStore(db_path=db_path)
         self._subscribers: Dict[str, List[Callable[[EventModel], Awaitable[None]]]] = {}
         self._middlewares: List[EventMiddleware] = []
-        self._event_store: List[EventModel] = []
-        self._init_db()
-
-    def _init_db(self) -> None:
-        os.makedirs(os.path.dirname(self.db_path) or "data", exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS event_store (
-                    event_id TEXT PRIMARY KEY,
-                    correlation_id TEXT NOT NULL,
-                    topic TEXT NOT NULL,
-                    sender TEXT NOT NULL,
-                    timestamp REAL NOT NULL,
-                    data_json TEXT NOT NULL
-                )
-            """)
-            conn.commit()
+        self._in_memory_history: List[EventModel] = []
 
     def add_middleware(self, middleware: EventMiddleware) -> None:
         self._middlewares.append(middleware)
@@ -46,27 +28,13 @@ class AsyncEventBus(IEventBus):
             except Exception as e:
                 logger.error(f"[AsyncEventBus] Middleware error: {e}")
 
-        # 2. In-Memory Store
-        self._event_store.append(current_event)
+        # 2. In-Memory History
+        self._in_memory_history.append(current_event)
         
-        # 3. Persistent SQLite Event Store
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("""
-                    INSERT OR IGNORE INTO event_store 
-                    (event_id, correlation_id, topic, sender, timestamp, data_json)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    current_event.event_id, current_event.correlation_id, 
-                    current_event.topic, current_event.sender, 
-                    current_event.timestamp, current_event.model_dump_json()
-                ))
-                conn.commit()
-        except Exception as e:
-            logger.error(f"[AsyncEventBus] Failed to persist event {current_event.event_id}: {e}")
+        # 3. Persistent SQLite Storage via EventStore
+        self.event_store.save_event(current_event)
             
-        # 4. Publish to Subscribers
+        # 4. Dispatch to Subscribers
         handlers_to_call = []
         for topic, handlers in self._subscribers.items():
             if topic == "*" or topic == current_event.topic or (topic.endswith(".*") and current_event.topic.startswith(topic[:-2])):
@@ -86,9 +54,7 @@ class AsyncEventBus(IEventBus):
             self._subscribers[topic].remove(handler)
 
     def get_event_history(self, correlation_id: Optional[str] = None, limit: int = 100) -> List[EventModel]:
-        if correlation_id:
-            return [ev for ev in self._event_store if ev.correlation_id == correlation_id][-limit:]
-        return self._event_store[-limit:]
+        return self.event_store.query_events(correlation_id=correlation_id, limit=limit)
 
     async def replay_events(self, correlation_id: str, handler: Callable[[EventModel], Awaitable[None]]) -> None:
         """Replays historical events for a specific correlation ID through a target handler."""

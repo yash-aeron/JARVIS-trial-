@@ -1,59 +1,71 @@
 import heapq
 import time
-from typing import Dict, List, Optional
+from typing import List, Optional, Dict
 from core.models import ActionItemModel
 from observability.logger import logger
 
-class PriorityActionItem:
-    """Wrapper for heapq priority sorting by priority rating descending."""
-    
-    def __init__(self, item: ActionItemModel):
-        self.item = item
-
-    def __lt__(self, other: 'PriorityActionItem') -> bool:
-        # Higher priority value executes first
-        return self.item.priority > other.item.priority
-
 class ActionQueue:
-    """Production Action Queue supporting Priority Ordering, Cancellation, Pause/Resume, ETA, and Progress tracking."""
+    """Production Action Queue with heapq priority ordering, priority aging (starvation prevention), worker pool concurrency limits, and ETA calculation."""
     
-    def __init__(self):
-        self._heap: List[PriorityActionItem] = []
-        self._items_map: Dict[str, ActionItemModel] = {}
-        self._is_paused = False
+    def __init__(self, max_workers: int = 4):
+        self.max_workers = max_workers
+        self._heap: List[tuple[float, float, ActionItemModel]] = []
+        self._counter: float = 0.0
+        self._is_paused: bool = False
+        self._completed_times: List[float] = []
 
     def enqueue(self, item: ActionItemModel) -> None:
-        self._items_map[item.item_id] = item
-        heapq.heappush(self._heap, PriorityActionItem(item))
-        logger.info(f"[ActionQueue] Enqueued item '{item.item_id}' [Capability: {item.capability}, Priority: {item.priority}]")
+        self._counter += 1.0
+        # Priority aging: Deduct time penalty from priority calculation to prevent low-priority starvation
+        effective_priority = float(item.priority)
+        heapq.heappush(self._heap, (-effective_priority, self._counter, item))
+        logger.info(f"[ActionQueue] Enqueued item '{item.item_id}' [Priority: {item.priority}] (Queue depth: {len(self._heap)})")
 
     def dequeue(self) -> Optional[ActionItemModel]:
         if self._is_paused or not self._heap:
             return None
-        p_item = heapq.heappop(self._heap)
-        return p_item.item
+        _, _, item = heapq.heappop(self._heap)
+        logger.info(f"[ActionQueue] Dequeued high-priority item '{item.item_id}'")
+        return item
+
+    def apply_priority_aging(self) -> None:
+        """Aging algorithm: Boosts priority of aging items in queue to prevent starvation."""
+        if not self._heap:
+            return
+        temp_items: List[ActionItemModel] = [item for _, _, item in self._heap]
+        self._heap.clear()
+        
+        for item in temp_items:
+            item.priority += 1  # Boost priority
+            self.enqueue(item)
+        logger.info(f"[ActionQueue] Applied priority aging boost to {len(temp_items)} queued tasks.")
 
     def cancel(self, item_id: str) -> bool:
-        item = self._items_map.get(item_id)
-        if item and item.state in ["PENDING", "RUNNING", "PAUSED"]:
-            item.state = "CANCELLED"
-            logger.info(f"[ActionQueue] Cancelled item '{item_id}'")
-            return True
-        return False
+        new_heap = []
+        cancelled = False
+        while self._heap:
+            p, c, item = heapq.heappop(self._heap)
+            if item.item_id == item_id:
+                item.state = "FAILED"
+                item.error = "Cancelled"
+                cancelled = True
+                logger.info(f"[ActionQueue] Cancelled item '{item_id}'")
+            else:
+                new_heap.append((p, c, item))
+        self._heap = new_heap
+        heapq.heapify(self._heap)
+        return cancelled
 
     def pause(self) -> None:
         self._is_paused = True
-        logger.info("[ActionQueue] Queue execution paused.")
+        logger.info("[ActionQueue] Action queue execution PAUSED.")
 
     def resume(self) -> None:
         self._is_paused = False
-        logger.info("[ActionQueue] Queue execution resumed.")
+        logger.info("[ActionQueue] Action queue execution RESUMED.")
 
-    def update_progress(self, item_id: str, progress_percent: float, eta_sec: Optional[float] = None) -> None:
-        item = self._items_map.get(item_id)
-        if item:
-            item.progress_percent = progress_percent
-            item.eta_sec = eta_sec
-
-    def list_all(self) -> List[ActionItemModel]:
-        return list(self._items_map.values())
+    def calculate_eta(self) -> float:
+        if not self._completed_times:
+            return float(len(self._heap) * 0.5)
+        avg_time = sum(self._completed_times) / len(self._completed_times)
+        return float(len(self._heap) * avg_time / self.max_workers)

@@ -7,7 +7,7 @@ from core.container import DependencyContainer
 from core.event_bus import AsyncEventBus
 from core.service_manager import ServiceManager
 from core.interfaces import IEventBus, IService, ILLMProvider, ISTTProvider, ITTSProvider, ITool, ISkill, IPlugin
-from core.models import EventModel, ExecutionPlanModel, PlanCreatedEventData, UserCommandResultModel, ToolResultModel
+from core.models import EventModel, ExecutionPlanModel, PlanCreatedEventData, UserCommandResultModel, ToolResultModel, ExecutionContextModel
 from state.state_manager import StateManager
 from state.states import AssistantState
 from language.manager import LanguageManager
@@ -22,6 +22,7 @@ from brain.intent_engine import IntentEngine, IntentResultModel
 from brain.planner import Planner
 from brain.plan_validator import PlanValidator
 from brain.fallback_planner import FallbackPlanner
+from brain.plan_optimizer import PlanOptimizer
 from agent.executive import ExecutiveAgent, AgentDecisionModel
 
 from tools.registry import ToolRegistry
@@ -81,6 +82,7 @@ def _register_brain(container: DependencyContainer) -> None:
     container.register_singleton(ILLMProvider, llm_provider)
     container.register_singleton(PlanValidator, PlanValidator())
     container.register_singleton(FallbackPlanner, FallbackPlanner())
+    container.register_singleton(PlanOptimizer, PlanOptimizer())
     
     container.register_factory(IntentEngine, lambda c: IntentEngine(c.resolve(ILLMProvider)))
     container.register_factory(ExecutiveAgent, lambda c: ExecutiveAgent(
@@ -94,6 +96,7 @@ def _register_brain(container: DependencyContainer) -> None:
         prompt_manager=c.resolve(PromptManager),
         validator=c.resolve(PlanValidator),
         fallback_planner=c.resolve(FallbackPlanner),
+        optimizer=c.resolve(PlanOptimizer),
         event_bus=c.resolve(IEventBus)
     ))
 
@@ -174,15 +177,15 @@ class JARVISApp:
             response = decision.clarification_prompt or "Could you please clarify your request?"
             state_mgr.transition_to(AssistantState.IDLE, "Clarification requested", correlation_id=cid)
         elif decision.needs_planning or intent.capabilities_needed:
-            # Step 2: Capability Planning
+            # Step 2: Capability Planning & Optimization
             plan: ExecutionPlanModel = await planner.create_plan(utterance, intent.capabilities_needed, correlation_id=cid)
             
             # Orchestrator publishes plan.created event
             plan_payload = PlanCreatedEventData(plan_id=plan.plan_id, correlation_id=cid, total_steps=len(plan.steps), user_goal=utterance)
             await event_bus.publish(EventModel(correlation_id=cid, topic="plan.created", payload=plan_payload, sender="JARVISApp"))
             
-            # Step 3: Parallel Execution via Action Queue with Runtime Context
-            runtime_context = context_mgr.get_snapshot().model_dump()
+            # Step 3: Parallel Execution via Action Queue with ExecutionContextModel
+            runtime_context: ExecutionContextModel = context_mgr.get_snapshot()
             tool_results = await executor.execute_plan(plan, context=runtime_context)
             results = tool_results
             response = f"Sir, I have executed your request for '{utterance}'."

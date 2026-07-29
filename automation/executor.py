@@ -8,7 +8,7 @@ from state.states import AssistantState
 from core.interfaces import IEventBus
 from core.models import (
     EventModel, ToolRequestModel, ToolResultModel, 
-    ExecutionPlanModel, PlanStepModel,
+    ExecutionPlanModel, PlanStepModel, ExecutionContextModel,
     ToolStartedEventData, ToolFinishedEventData
 )
 from observability.logger import logger
@@ -34,7 +34,7 @@ class PlanExecutor:
         step: PlanStepModel, 
         plan_id: str, 
         cid: str, 
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[ExecutionContextModel] = None
     ) -> ToolResultModel:
         item = ActionItemModel(
             item_id=f"{plan_id}_step_{step.step_id}",
@@ -45,7 +45,8 @@ class PlanExecutor:
         self.action_queue.enqueue(item)
         item.state = "RUNNING"
         
-        ranked_candidates = self.tool_registry.find_and_rank_by_capability(step.capability, context=context)
+        ctx_dict = context.model_dump() if context else None
+        ranked_candidates = self.tool_registry.find_and_rank_by_capability(step.capability, context=ctx_dict)
         if not ranked_candidates:
             item.state = "FAILED"
             item.error = f"No tools found for capability '{step.capability}'."
@@ -103,7 +104,7 @@ class PlanExecutor:
             
         return tool_res or ToolResultModel(request_id=item.item_id, correlation_id=cid, status="failed", error="Unknown error")
 
-    async def execute_plan(self, plan: ExecutionPlanModel, context: Optional[Dict[str, Any]] = None) -> List[ToolResultModel]:
+    async def execute_plan(self, plan: ExecutionPlanModel, context: Optional[ExecutionContextModel] = None) -> List[ToolResultModel]:
         cid = plan.correlation_id
         self.state_manager.transition_to(AssistantState.EXECUTING, f"Executing plan {plan.plan_id}", correlation_id=cid)
         

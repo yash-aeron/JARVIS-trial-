@@ -16,6 +16,20 @@ class ServiceState(str, Enum):
     STOPPED = "STOPPED"
     FAILED = "FAILED"
 
+class ExecutionContextModel(BaseModel):
+    focused_app: str = "VS Code"
+    foreground_process_name: str = "code.exe"
+    foreground_pid: Optional[int] = None
+    active_window_title: str = "JARVIS Workspace"
+    clipboard_content: str = ""
+    screen_resolution: str = "1920x1080"
+    active_mode: str = "Developer"
+
+class PlannerContextModel(BaseModel):
+    user_goal: str
+    capabilities_needed: List[str] = Field(default_factory=list)
+    execution_context: ExecutionContextModel = Field(default_factory=ExecutionContextModel)
+
 class ToolMetadata(BaseModel):
     name: str
     description: str

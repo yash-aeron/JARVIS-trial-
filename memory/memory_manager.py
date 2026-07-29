@@ -8,7 +8,7 @@ from memory.schema import MemoryItemModel
 from observability.logger import logger
 
 class MemoryManager:
-    """Production Semantic Memory Controller with Cosine Similarity vector search, multi-factor ranking, and access metrics."""
+    """Production Semantic Memory Controller with Cosine Similarity vector search, multi-factor weighted formula, and access metrics."""
     
     def __init__(self, db_path: str = "data/memory.db"):
         self.db_path = db_path
@@ -61,7 +61,7 @@ class MemoryManager:
         project: Optional[str] = None,
         min_importance: float = 0.0
     ) -> List[Tuple[MemoryItemModel, float]]:
-        """Performs semantic similarity search combining vector cosine similarity, tag overlap, importance, and recency decay."""
+        """Multi-Factor Weighted Ranking Formula: 0.45 Semantic + 0.20 Importance + 0.20 Recency + 0.10 Project + 0.05 Confidence."""
         query_tags = query_tags or []
         query_sql = "SELECT item_id, content, tags, importance, project, language, source, confidence, access_count, last_accessed, timestamp, embedding_version FROM memories WHERE importance >= ?"
         params: List[Any] = [min_importance]
@@ -76,7 +76,6 @@ class MemoryManager:
             
         now = time.time()
         scored_items: List[Tuple[MemoryItemModel, float]] = []
-        
         query_vec = self._text_to_vector(query_text)
         
         for r in rows:
@@ -88,26 +87,37 @@ class MemoryManager:
                 last_accessed=r[9], timestamp=r[10], embedding_version=r[11]
             )
             
-            # 1. Calculate Vector Cosine Similarity
+            # 1. Semantic Cosine Similarity (Normalized 0.0 - 1.0)
             mem_vec = self._text_to_vector(item.content)
-            cosine_sim = self._cosine_similarity(query_vec, mem_vec)
+            semantic_score = self._cosine_similarity(query_vec, mem_vec)
             
-            # 2. Tag Matching Weight
-            tag_matches = sum(1 for t in query_tags if t in tags_list)
+            # 2. Importance Score (Normalized 0.0 - 1.0)
+            importance_score = min(1.0, item.importance / 5.0)
             
-            # 3. Recency & Access Metrics
+            # 3. Recency Decay Score (24-hour half-life)
             age_hours = max(0.1, (now - item.timestamp) / 3600.0)
-            recency_score = 1.0 / (1.0 + (age_hours / 24.0))  # 24-hour half life
-            access_boost = min(1.5, 1.0 + (item.access_count * 0.05))
+            recency_score = 1.0 / (1.0 + (age_hours / 24.0))
             
-            # Multi-factor Semantic Ranking Formula
-            score = (cosine_sim * 4.0) + (tag_matches * 2.5) + (item.importance * 1.2) + (item.confidence * 1.0) + (recency_score * 0.8) * access_boost
+            # 4. Project Alignment Score
+            project_score = 1.0 if (project and item.project and project.lower() == item.project.lower()) else 0.5
+            
+            # 5. Confidence Rating
+            confidence_score = min(1.0, item.confidence)
+            
+            # Multi-Factor Weighted Scoring Formula
+            score = (
+                (0.45 * semantic_score) +
+                (0.20 * importance_score) +
+                (0.20 * recency_score) +
+                (0.10 * project_score) +
+                (0.05 * confidence_score)
+            ) * 10.0  # Scale 0-10
+            
             scored_items.append((item, score))
             
         scored_items.sort(key=lambda x: x[1], reverse=True)
         top_results = scored_items[:top_k]
         
-        # Proactively increment access metrics for retrieved items
         for item, _ in top_results:
             self._touch_access_metric(item.item_id)
             
