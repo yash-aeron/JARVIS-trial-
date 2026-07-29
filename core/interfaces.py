@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, List, Optional, Callable, Awaitable, AsyncGenerator
-from core.models import EventModel, ToolMetadata, ToolRequestModel, ToolResultModel
+from core.models import EventModel, ToolMetadata, ToolRequestModel, ToolResultModel, ExecutionContextModel
 
 class IEventBus(ABC):
     @abstractmethod
@@ -104,8 +104,8 @@ class ISkill(ABC):
         ...
 
     @abstractmethod
-    async def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Executes skill workflow."""
+    async def run(self, context: ExecutionContextModel) -> ToolResultModel:
+        """Executes skill workflow returning typed ToolResultModel."""
         ...
 
 class IPlugin(ABC):

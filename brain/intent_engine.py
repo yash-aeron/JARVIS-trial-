@@ -1,7 +1,8 @@
 from enum import Enum
-from typing import Dict, Any, List, Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field
 from core.interfaces import ILLMProvider
+from core.models import ExecutionContextModel
 from observability.logger import logger
 
 class IntentCategory(str, Enum):
@@ -25,7 +26,12 @@ class IntentEngine:
     def __init__(self, llm_provider: ILLMProvider):
         self.llm = llm_provider
 
-    async def classify(self, utterance: str, correlation_id: str, context: Optional[Dict[str, Any]] = None) -> IntentResultModel:
+    async def classify(
+        self, 
+        utterance: str, 
+        correlation_id: str, 
+        context: Optional[ExecutionContextModel] = None
+    ) -> IntentResultModel:
         text_lower = utterance.lower()
         
         # Capability-oriented intent matching

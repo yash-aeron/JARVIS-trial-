@@ -127,6 +127,24 @@ class UserCommandResultModel(BaseModel):
     execution_results: List[ToolResultModel] = Field(default_factory=list)
     response: str
 
+class UndoRecordModel(BaseModel):
+    request_id: str
+    correlation_id: str
+    tool_name: str
+    timestamp: float = Field(default_factory=lambda: time.time())
+
+class VRAMStatusModel(BaseModel):
+    vram_budget_mb: float
+    allocated_mb: float
+    free_mb: float
+    is_vram_pressure: bool
+    loaded_models: List[str] = Field(default_factory=list)
+
+class MetricsSummaryModel(BaseModel):
+    system_status: SystemStatusModel
+    benchmarks: BenchmarkResultModel
+    counters: Dict[str, int] = Field(default_factory=dict)
+
 # Dedicated Pydantic Event Payloads
 class ToolStartedEventData(BaseModel):
     step_id: int

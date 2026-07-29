@@ -1,11 +1,18 @@
-from typing import Dict, Any, Optional
+from typing import Optional
+from pydantic import BaseModel
 from agent.decision_engine import DecisionEngine, AgentDecisionModel
 from brain.intent_engine import IntentEngine, IntentResultModel
 from state.state_manager import StateManager
 from state.states import AssistantState
 from core.interfaces import IEventBus
-from core.models import EventModel, IntentDetectedEventData
+from core.models import EventModel, IntentDetectedEventData, ExecutionContextModel
 from observability.logger import logger
+
+class ExecutiveProcessResultModel(BaseModel):
+    utterance: str
+    correlation_id: str
+    intent: IntentResultModel
+    decision: AgentDecisionModel
 
 class ExecutiveAgent:
     """Executive controller evaluating requests and emitting typed IntentDetectedEventData payloads."""
@@ -16,7 +23,12 @@ class ExecutiveAgent:
         self.state_manager = state_manager
         self.event_bus = event_bus
 
-    async def process(self, utterance: str, correlation_id: str, context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def process(
+        self, 
+        utterance: str, 
+        correlation_id: str, 
+        context: Optional[ExecutionContextModel] = None
+    ) -> ExecutiveProcessResultModel:
         self.state_manager.transition_to(AssistantState.THINKING, "Executive Agent processing request", correlation_id=correlation_id)
         
         intent_res: IntentResultModel = await self.intent_engine.classify(utterance, correlation_id, context)
@@ -40,9 +52,9 @@ class ExecutiveAgent:
                 )
             )
             
-        return {
-            "utterance": utterance,
-            "correlation_id": correlation_id,
-            "intent": intent_res,
-            "decision": decision
-        }
+        return ExecutiveProcessResultModel(
+            utterance=utterance,
+            correlation_id=correlation_id,
+            intent=intent_res,
+            decision=decision
+        )

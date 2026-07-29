@@ -1,5 +1,7 @@
-from typing import Dict, Any, List, Optional
+import uuid
+from typing import Dict, List, Optional
 from core.interfaces import ISkill, ITool
+from core.models import ExecutionContextModel, ToolRequestModel, ToolResultModel
 from tools.registry import ToolRegistry
 from observability.logger import logger
 
@@ -17,12 +19,23 @@ class CodingSkill(ISkill):
     def capabilities(self) -> List[str]:
         return ["coding_environment", "git_automation", "terminal_execution"]
 
-    async def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, context: ExecutionContextModel) -> ToolResultModel:
         logger.info("[CodingSkill] Executing coding environment workflow...")
         launcher = self.tool_registry.get("app_launcher")
+        req = ToolRequestModel(
+            correlation_id=str(uuid.uuid4()),
+            capability="open_application",
+            tool_name="app_launcher",
+            args={"app_name": "VS Code", "action": "launch"}
+        )
         if launcher:
-            await launcher.execute(app_name="VS Code", action="launch")
-        return {"status": "success", "skill": self.name, "message": "Coding environment ready."}
+            return await launcher.execute(req)
+        return ToolResultModel(
+            request_id=req.request_id,
+            correlation_id=req.correlation_id,
+            status="completed",
+            result={"skill": self.name, "message": "Coding environment ready."}
+        )
 
 class SkillEngine:
     """Registry and execution orchestrator for composite skills."""

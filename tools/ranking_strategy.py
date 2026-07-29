@@ -1,19 +1,19 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from core.interfaces import ITool
-from core.models import ToolMetadata
+from core.models import ToolMetadata, ExecutionContextModel
 
 class IRankingStrategy(ABC):
     @abstractmethod
-    def rank(self, candidates: List[ITool], capability: str, context: Optional[Dict[str, Any]] = None) -> List[Tuple[ITool, float]]:
+    def rank(self, candidates: List[ITool], capability: str, context: Optional[ExecutionContextModel] = None) -> List[Tuple[ITool, float]]:
         """Ranks candidate tools based on capability match, context alignment, and strategy scoring."""
         ...
 
 class ContextAwareRankingStrategy(IRankingStrategy):
     """Evaluates tool relevance against active runtime context (focused window/app)."""
     
-    def rank(self, candidates: List[ITool], capability: str, context: Optional[Dict[str, Any]] = None) -> List[Tuple[ITool, float]]:
-        focused_app = (context or {}).get("focused_app", "").lower()
+    def rank(self, candidates: List[ITool], capability: str, context: Optional[ExecutionContextModel] = None) -> List[Tuple[ITool, float]]:
+        focused_app = (context.focused_app if context else "").lower()
         results: List[Tuple[ITool, float]] = []
         for tool in candidates:
             score = 0.5
@@ -28,9 +28,9 @@ class CompositeRankingStrategy(IRankingStrategy):
     def __init__(self, historical_success_map: Optional[Dict[str, float]] = None):
         self.historical_success_map = historical_success_map or {}
 
-    def rank(self, candidates: List[ITool], capability: str, context: Optional[Dict[str, Any]] = None) -> List[Tuple[ITool, float]]:
+    def rank(self, candidates: List[ITool], capability: str, context: Optional[ExecutionContextModel] = None) -> List[Tuple[ITool, float]]:
         scored_candidates: List[Tuple[ITool, float]] = []
-        focused_app = (context or {}).get("focused_app", "").lower()
+        focused_app = (context.focused_app if context else "").lower()
         
         for tool in candidates:
             score = 0.40  # Base score

@@ -1,6 +1,6 @@
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from core.interfaces import ITool
-from core.models import ToolMetadata
+from core.models import ToolMetadata, ExecutionContextModel
 from tools.ranking_strategy import IRankingStrategy, ContextAwareRankingStrategy, CompositeRankingStrategy
 from observability.logger import logger
 
@@ -30,9 +30,9 @@ class ToolRegistry:
     def find_by_capability(self, capability: str) -> List[ITool]:
         return self._capabilities_map.get(capability, [])
 
-    def find_and_rank_by_capability(self, capability: str, context: Optional[Dict[str, Any]] = None) -> List[Tuple[ITool, float]]:
+    def find_and_rank_by_capability(self, capability: str, context: Optional[ExecutionContextModel] = None) -> List[Tuple[ITool, float]]:
         candidates = self._capabilities_map.get(capability, [])
         return self.ranking_strategy.rank(candidates, capability, context)
 
-    def list_all(self) -> List[Dict[str, Any]]:
-        return [t.metadata.model_dump() for t in self._tools.values()]
+    def list_all(self) -> List[ToolMetadata]:
+        return [t.metadata for t in self._tools.values()]

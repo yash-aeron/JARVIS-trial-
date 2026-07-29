@@ -1,5 +1,6 @@
-from typing import Dict, Any, List
-from core.interfaces import ITool, ToolMetadata
+from typing import List
+from core.interfaces import ITool
+from core.models import ToolMetadata, ToolRequestModel, ToolResultModel
 from observability.logger import logger
 
 class MCPToolAdapter(ITool):
@@ -20,9 +21,19 @@ class MCPToolAdapter(ITool):
             args_schema={"params": "dict"}
         )
 
-    async def execute(self, **kwargs) -> Dict[str, Any]:
-        logger.info(f"[MCPToolAdapter] Executing MCP tool '{self._name}' with kwargs: {kwargs}")
-        return {"status": "success", "mcp_tool": self._name, "output": "MCP execution completed."}
+    async def execute(self, request: ToolRequestModel) -> ToolResultModel:
+        logger.info(f"[MCPToolAdapter] Executing MCP tool '{self._name}' with request: {request.request_id}")
+        return ToolResultModel(
+            request_id=request.request_id,
+            correlation_id=request.correlation_id,
+            status="completed",
+            result={"mcp_tool": self._name, "output": "MCP execution completed."}
+        )
 
-    async def undo(self, **kwargs) -> Dict[str, Any]:
-        return {"status": "undone", "mcp_tool": self._name}
+    async def undo(self, request: ToolRequestModel) -> ToolResultModel:
+        return ToolResultModel(
+            request_id=request.request_id,
+            correlation_id=request.correlation_id,
+            status="undone",
+            result={"mcp_tool": self._name}
+        )

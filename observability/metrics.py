@@ -1,6 +1,6 @@
 import time
-from typing import Dict, Any, List, Optional
-from core.models import SystemStatusModel, BenchmarkResultModel
+from typing import Dict, List, Optional
+from core.models import SystemStatusModel, BenchmarkResultModel, MetricsSummaryModel
 from system.monitor import SystemMonitor
 from observability.logger import logger
 
@@ -44,9 +44,9 @@ class MetricsProvider:
             tool_execution_latency_ms=round(avg_tool, 3)
         )
 
-    def get_summary(self) -> Dict[str, Any]:
-        return {
-            "system_status": self.get_system_status().model_dump(),
-            "benchmarks": self.get_benchmark_results().model_dump(),
-            "counters": self._execution_counts
-        }
+    def get_summary(self) -> MetricsSummaryModel:
+        return MetricsSummaryModel(
+            system_status=self.get_system_status(),
+            benchmarks=self.get_benchmark_results(),
+            counters=self._execution_counts
+        )

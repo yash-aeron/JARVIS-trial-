@@ -1,5 +1,6 @@
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, List
+from core.models import VRAMStatusModel
 from observability.logger import logger
 
 class GPUManager:
@@ -10,19 +11,19 @@ class GPUManager:
         self._loaded_models: Dict[str, float] = {}  # Model name -> MB VRAM
         self._is_warmed_up: bool = False
 
-    def check_vram_status(self) -> Dict[str, Any]:
-        """Queries current allocated VRAM usage and remaining budget."""
+    def check_vram_status(self) -> VRAMStatusModel:
+        """Queries current allocated VRAM usage and remaining budget returning typed VRAMStatusModel."""
         used_mb = sum(self._loaded_models.values())
         free_mb = max(0.0, self.vram_budget_mb - used_mb)
         is_pressure = used_mb > self.vram_budget_mb
         
-        return {
-            "vram_budget_mb": self.vram_budget_mb,
-            "allocated_mb": used_mb,
-            "free_mb": free_mb,
-            "is_vram_pressure": is_pressure,
-            "loaded_models": list(self._loaded_models.keys())
-        }
+        return VRAMStatusModel(
+            vram_budget_mb=self.vram_budget_mb,
+            allocated_mb=used_mb,
+            free_mb=free_mb,
+            is_vram_pressure=is_pressure,
+            loaded_models=list(self._loaded_models.keys())
+        )
 
     def register_model(self, model_name: str, estimated_vram_mb: float = 1200.0) -> bool:
         """Registers and lazy loads a model onto GPU memory, triggering auto-offloading if VRAM threshold is breached."""
