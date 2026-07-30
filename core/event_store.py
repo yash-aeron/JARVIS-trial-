@@ -5,6 +5,7 @@ import os
 import sqlite3
 import time
 import uuid
+from contextlib import contextmanager
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from core.models import EventModel
@@ -37,9 +38,21 @@ class EventStore:
         self.db_path = db_path
         self._init_db()
 
+    @contextmanager
+    def _connect(self):
+        """Yield a connection that is always closed — sqlite's context manager only commits."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
-        os.makedirs(os.path.dirname(self.db_path) or "data", exist_ok=True)
-        with sqlite3.connect(self.db_path) as conn:
+        parent = os.path.dirname(self.db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with self._connect() as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS event_store (
@@ -64,15 +77,15 @@ class EventStore:
 
     def save_event(self, event: EventModel) -> bool:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT OR IGNORE INTO event_store 
+                    INSERT OR IGNORE INTO event_store
                     (event_id, correlation_id, topic, sender, timestamp, data_json)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (
-                    event.event_id, event.correlation_id, 
-                    event.topic, event.sender, 
+                    event.event_id, event.correlation_id,
+                    event.topic, event.sender,
                     event.timestamp, event.model_dump_json()
                 ))
                 conn.commit()
@@ -84,7 +97,7 @@ class EventStore:
     def save_snapshot(self, snapshot: StateSnapshotModel) -> bool:
         """Point-in-Time state snapshot saving."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute("""
                     INSERT OR REPLACE INTO state_snapshots
@@ -105,11 +118,12 @@ class EventStore:
     def get_latest_snapshot(self, state_name: str) -> Optional[StateSnapshotModel]:
         """Fetch latest point-in-time snapshot for a given state component."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
+                # rowid breaks ties: time.time() has coarse resolution on Windows.
                 row = cursor.execute("""
                     SELECT snapshot_json FROM state_snapshots
-                    WHERE state_name = ? ORDER BY timestamp DESC LIMIT 1
+                    WHERE state_name = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1
                 """, (state_name,)).fetchone()
                 if row:
                     return StateSnapshotModel.model_validate_json(row[0])
@@ -118,10 +132,10 @@ class EventStore:
         return None
 
     def query_audit_logs(
-        self, 
-        sender: Optional[str] = None, 
-        topic: Optional[str] = None, 
-        correlation_id: Optional[str] = None, 
+        self,
+        sender: Optional[str] = None,
+        topic: Optional[str] = None,
+        correlation_id: Optional[str] = None,
         limit: int = 100
     ) -> List[AuditLogRecordModel]:
         """Audit Log View: filter who/what triggered each event."""
@@ -138,15 +152,16 @@ class EventStore:
             query += " AND correlation_id = ?"
             params.append(correlation_id)
 
-        query += " ORDER BY timestamp ASC LIMIT ?"
+        # Select the NEWEST rows, then present them oldest-first.
+        query += " ORDER BY timestamp DESC, rowid DESC LIMIT ?"
         params.append(limit)
 
         records: List[AuditLogRecordModel] = []
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 rows = cursor.execute(query, params).fetchall()
-                for r in rows:
+                for r in reversed(rows):
                     ev_model = EventModel.model_validate_json(r[5])
                     summary = f"Event '{ev_model.topic}' sent by '{ev_model.sender}' [CID: {ev_model.correlation_id}]"
                     records.append(AuditLogRecordModel(
@@ -164,15 +179,16 @@ class EventStore:
         if correlation_id:
             query += " WHERE correlation_id = ?"
             params.append(correlation_id)
-        query += " ORDER BY timestamp ASC LIMIT ?"
+        # Newest `limit` rows, returned in chronological order so replay is correct.
+        query += " ORDER BY timestamp DESC, rowid DESC LIMIT ?"
         params.append(limit)
 
         events: List[EventModel] = []
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with self._connect() as conn:
                 cursor = conn.cursor()
                 rows = cursor.execute(query, params).fetchall()
-                for row in rows:
+                for row in reversed(rows):
                     events.append(EventModel.model_validate_json(row[0]))
         except Exception as e:
             logger.error(f"[EventStore] Failed to query events: {e}")

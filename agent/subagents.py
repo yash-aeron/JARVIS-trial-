@@ -63,7 +63,8 @@ class PlanningSubagent(BaseSubagent):
         logger.info(f"[PlanningSubagent] Processing planning task for prompt: '{req.prompt}'")
         try:
             plan: ExecutionPlanModel = await self.planner.create_plan(
-                utterance=req.prompt,
+                goal=req.prompt,
+                capabilities_needed=(req.context or {}).get("capabilities", []),
                 correlation_id=req.correlation_id
             )
             res = SubagentTaskResultModel(

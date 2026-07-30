@@ -69,10 +69,14 @@ class ContextReaderTool(ITool):
                 data = {"clipboard_content": text}
 
             elif action == "selected":
-                # Full snapshot with Ctrl+C enabled
+                # Full snapshot with Ctrl+C enabled. The flag lives on a shared
+                # ContextManager, so it must be restored even if the read raises —
+                # otherwise later snapshots keep injecting keystrokes.
                 self._ctx.enable_selected_text_capture(True)
-                snap = await loop.run_in_executor(None, self._ctx.get_snapshot)
-                self._ctx.enable_selected_text_capture(False)
+                try:
+                    snap = await loop.run_in_executor(None, self._ctx.get_snapshot)
+                finally:
+                    self._ctx.enable_selected_text_capture(False)
                 data = {
                     "selected_text":   snap.selected_text,
                     "clipboard_content": snap.clipboard_content,

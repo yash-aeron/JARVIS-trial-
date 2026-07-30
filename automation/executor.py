@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import Dict, Any, Optional, List, Set
 from tools.registry import ToolRegistry
 from automation.action_queue import ActionQueue
@@ -46,18 +47,20 @@ class PlanExecutor:
         )
         self.action_queue.enqueue(item)
         item.state = "RUNNING"
-        
-        ctx_dict = context.model_dump() if context else None
-        ranked_candidates = self.tool_registry.find_and_rank_by_capability(step.capability, context=ctx_dict)
+        started_at = time.monotonic()
+
+        ranked_candidates = self.tool_registry.find_and_rank_by_capability(step.capability, context=context)
         if not ranked_candidates:
             item.state = "FAILED"
             item.error = f"No tools found for capability '{step.capability}'."
+            self.action_queue.complete(item.item_id, duration_sec=time.monotonic() - started_at)
             return ToolResultModel(request_id=item.item_id, correlation_id=cid, status="failed", error=item.error)
-            
+
         if self.permission_manager:
-            if not self.permission_manager.evaluate_request_security(step.capability, cid):
+            if not self.permission_manager.evaluate_request_security(step.capability, cid, args=step.args):
                 item.state = "FAILED"
                 item.error = f"Permission denied: Capability '{step.capability}' blocked by security policy."
+                self.action_queue.complete(item.item_id, duration_sec=time.monotonic() - started_at)
                 return ToolResultModel(request_id=item.item_id, correlation_id=cid, status="failed", error=item.error)
 
         tool, score = ranked_candidates[0]
@@ -101,7 +104,9 @@ class PlanExecutor:
         else:
             item.state = "FAILED"
             item.error = tool_res.error if tool_res else "Failed execution"
-            
+
+        self.action_queue.complete(item.item_id, duration_sec=time.monotonic() - started_at)
+
         if self.event_bus:
             fin_payload = ToolFinishedEventData(
                 step_id=step.step_id,
@@ -131,8 +136,22 @@ class PlanExecutor:
             ]
             
             if not ready_steps:
-                ready_steps = [pending_steps[0]]
-                
+                # No step's dependencies are satisfiable — running them anyway would
+                # execute actions whose prerequisites never completed.
+                for step in pending_steps:
+                    unmet = [d for d in step.depends_on if d not in completed_step_ids]
+                    results[step.step_id] = ToolResultModel(
+                        request_id=f"{plan.plan_id}_step_{step.step_id}",
+                        correlation_id=cid,
+                        status="failed",
+                        error=f"Unsatisfied dependency: step(s) {unmet} did not complete."
+                    )
+                logger.warning(
+                    f"[PlanExecutor] Aborting plan {plan.plan_id}: "
+                    f"{len(pending_steps)} step(s) have unsatisfied dependencies. [CID: {cid}]"
+                )
+                break
+
             tasks = [self._execute_single_step(step, plan.plan_id, cid, context) for step in ready_steps]
             step_results = await asyncio.gather(*tasks, return_exceptions=True)
             

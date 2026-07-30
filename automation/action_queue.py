@@ -64,6 +64,34 @@ class ActionQueue:
         self._is_paused = False
         logger.info("[ActionQueue] Action queue execution RESUMED.")
 
+    def complete(self, item_id: str, duration_sec: Optional[float] = None) -> bool:
+        """
+        Remove a terminal item from the queue and record its duration for ETA.
+
+        The executor drives steps directly rather than pulling from this queue, so
+        without this the heap would retain every item (and its args/result) for the
+        process lifetime and ETA would never see a real sample.
+        """
+        removed = False
+        remaining = []
+        while self._heap:
+            p, c, item = heapq.heappop(self._heap)
+            if item.item_id == item_id and not removed:
+                removed = True
+            else:
+                remaining.append((p, c, item))
+        self._heap = remaining
+        heapq.heapify(self._heap)
+
+        if duration_sec is not None and duration_sec >= 0:
+            self._completed_times.append(duration_sec)
+
+        return removed
+
+    def depth(self) -> int:
+        """Current number of queued items."""
+        return len(self._heap)
+
     def calculate_eta(self) -> float:
         if not self._completed_times:
             return float(len(self._heap) * 0.5)

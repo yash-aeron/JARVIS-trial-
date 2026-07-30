@@ -17,7 +17,7 @@ class TraceSpan:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         duration = time.perf_counter() - self.start_time
-        metrics.record_latency(self.operation_name, duration)
+        metrics.record_latency(self.operation_name, duration * 1000.0)
         if exc_type:
             logger.error(f"[Trace Fail] {self.operation_name} after {duration:.4f}s: {exc_val}")
         else:

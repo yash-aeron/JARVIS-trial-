@@ -50,3 +50,7 @@ class MetricsProvider:
             benchmarks=self.get_benchmark_results(),
             counters=self._execution_counts
         )
+
+
+# Shared default provider for module-level instrumentation (see observability.tracing).
+metrics = MetricsProvider()

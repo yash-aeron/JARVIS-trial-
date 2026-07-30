@@ -55,13 +55,21 @@ class MemoryManagementTool(ITool):
         )
 
     async def execute(self, request: ToolRequestModel) -> ToolResultModel:
-        action     = request.args.get("action", "recall").strip().lower()
-        query_text = request.args.get("query", "").strip()
-        content    = request.args.get("content", "").strip()
-        project    = request.args.get("project", None)
-        path       = request.args.get("path", "").strip()
-        importance = float(request.args.get("importance", 3.0))
-        tags       = request.args.get("tags", [])
+        try:
+            action     = str(request.args.get("action") or "recall").strip().lower()
+            query_text = str(request.args.get("query") or "").strip()
+            content    = str(request.args.get("content") or "").strip()
+            project    = request.args.get("project", None)
+            path       = str(request.args.get("path") or "").strip()
+            importance = float(request.args.get("importance") or 3.0)
+            tags       = request.args.get("tags") or []
+        except (TypeError, ValueError) as exc:
+            return ToolResultModel(
+                request_id=request.request_id,
+                correlation_id=request.correlation_id,
+                status="failed",
+                error=f"Invalid memory tool arguments: {exc}",
+            )
 
         logger.info(f"[MemoryTool] action='{action}' project='{project}' query='{query_text[:30]}' [CID: {request.correlation_id}]")
 

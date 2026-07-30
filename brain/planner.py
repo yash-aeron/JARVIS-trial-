@@ -35,7 +35,12 @@ class Planner:
         logger.info(f"[Planner] Orchestrating capability plan [CID: {correlation_id}] for goal: '{goal}'")
         
         # 1. PromptManager injected via DI
-        prompt_text = self.prompt_manager.get("planner", goal=goal, capabilities=", ".join(capabilities_needed))
+        prompt_text = self.prompt_manager.get(
+            "planner",
+            goal=goal,
+            capabilities=", ".join(capabilities_needed),
+            context=f"Assistant state: {self.state_manager.current_state.name}"
+        )
         
         # 2. Structured JSON generation from LLM
         llm_json = await self.llm.generate_json(prompt=prompt_text, system_prompt="Output strict JSON execution plans.")

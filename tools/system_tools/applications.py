@@ -20,7 +20,9 @@ Win32 primitives used:
 
 import os
 import sys
+import re
 import time
+import shutil
 import asyncio
 import ctypes
 import ctypes.wintypes
@@ -52,6 +54,12 @@ SW_RESTORE      = 9
 SW_SHOW         = 5
 WM_CLOSE        = 0x0010
 ENUM_PROC_TYPE  = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+
+# PID 0 is System Idle Process, 4 is the Windows kernel — never a launch target.
+_PROTECTED_PIDS = {0, 4}
+
+# Hide the shim console on Windows; harmless elsewhere.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 # ── Application catalog ────────────────────────────────────────────────────────
 # Maps lowercase alias → (executable patterns for psutil, launch command)
@@ -198,6 +206,37 @@ def _focus_window_with_title(pid: int, title_hint: Optional[str]) -> Tuple[bool,
 
 
 # ── Process lookup ─────────────────────────────────────────────────────────────
+# Unknown (non-catalog) app names are matched against live process names and, on
+# the spawn path, handed to cmd.exe — which re-parses shell metacharacters even
+# under shell=False. Both paths require a strict, conservative name.
+_SAFE_APP_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._+\-]*$")
+_MIN_UNKNOWN_NAME_LEN = 3
+
+
+def _validate_unknown_app_name(orig_name: str) -> None:
+    """Reject non-catalog names that are unsafe to shell out or too broad to match on."""
+    name = orig_name.strip()
+    if len(name) < _MIN_UNKNOWN_NAME_LEN:
+        raise ValueError(
+            f"Unrecognized application name {orig_name!r} is too short to resolve safely "
+            f"(minimum {_MIN_UNKNOWN_NAME_LEN} characters)."
+        )
+    if not _SAFE_APP_NAME.match(name):
+        raise ValueError(
+            f"Unrecognized application name {orig_name!r} contains unsupported characters. "
+            "Only letters, digits, spaces, and . _ + - are allowed."
+        )
+
+
+def _match_patterns(app_lower: str) -> List[str]:
+    """Resolve the psutil name patterns for an alias, validating non-catalog names."""
+    if app_lower in _APP_CATALOG:
+        patterns, _ = _APP_CATALOG[app_lower]
+        return [p.lower() for p in patterns]
+    _validate_unknown_app_name(app_lower)
+    return [app_lower]
+
+
 def _find_process(app_lower: str) -> Tuple[bool, Optional[int], str]:
     """
     Search running processes for one matching app_lower.
@@ -207,11 +246,12 @@ def _find_process(app_lower: str) -> Tuple[bool, Optional[int], str]:
 
     Returns (is_running, pid, exe_name).
     """
-    patterns, _ = _APP_CATALOG.get(app_lower, ([app_lower], []))
-    pat_lower    = [p.lower() for p in patterns]
+    pat_lower = _match_patterns(app_lower)
 
     for proc in psutil.process_iter(["pid", "name"]):
         try:
+            if proc.info["pid"] in _PROTECTED_PIDS:
+                continue
             pname = (proc.info["name"] or "").lower()
             for pat in pat_lower:
                 if pat in pname:
@@ -223,12 +263,13 @@ def _find_process(app_lower: str) -> Tuple[bool, Optional[int], str]:
 
 def _find_all_processes(app_lower: str) -> List[Tuple[int, str]]:
     """Return ALL running processes matching the alias (for multi-instance apps)."""
-    patterns, _ = _APP_CATALOG.get(app_lower, ([app_lower], []))
-    pat_lower    = [p.lower() for p in patterns]
+    pat_lower = _match_patterns(app_lower)
     found: List[Tuple[int, str]] = []
 
     for proc in psutil.process_iter(["pid", "name"]):
         try:
+            if proc.info["pid"] in _PROTECTED_PIDS:
+                continue
             pname = (proc.info["name"] or "").lower()
             for pat in pat_lower:
                 if pat in pname:
@@ -245,19 +286,37 @@ def _spawn_app(app_lower: str, orig_name: str) -> Optional[int]:
     Launch the application using catalog command or a shell `start` fallback.
     Returns the spawned process PID (may be the shell wrapper PID on `start` commands).
     """
-    _, cmd = _APP_CATALOG.get(app_lower, ([], ["cmd", "/c", "start", orig_name]))
+    if app_lower in _APP_CATALOG:
+        _, cmd = _APP_CATALOG[app_lower]
+        cmd = list(cmd)
+        # Catalog entries name bare executables ("code"), but launchers like VS Code
+        # ship as .CMD shims that Popen cannot resolve without an extension.
+        if cmd[0] != "cmd":
+            resolved = shutil.which(cmd[0])
+            if resolved:
+                cmd[0] = resolved
+    else:
+        _validate_unknown_app_name(orig_name)
+        cmd = ["cmd", "/c", "start", "", orig_name]
 
     try:
         if cmd[0] == "cmd":
-            proc = subprocess.Popen(cmd, shell=False, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            # `cmd /c start` is only a launcher shim — its console must stay hidden,
+            # otherwise every launch flashes a command prompt window.
+            proc = subprocess.Popen(cmd, shell=False, creationflags=_NO_WINDOW)
         else:
             proc = subprocess.Popen(cmd, shell=False)
         logger.info(f"[AppLauncher] Spawned '{' '.join(cmd)}' PID={proc.pid}")
         return proc.pid
-    except FileNotFoundError:
-        # Last-resort: cmd /c start <name>
-        fallback = ["cmd", "/c", "start", orig_name]
-        proc = subprocess.Popen(fallback, shell=False)
+    except (FileNotFoundError, OSError) as exc:
+        # Hand the executable we were asked to run to `start`, not the spoken alias:
+        # "vs code" is not something Windows can resolve, but "code" is.
+        target = cmd[0] if cmd[0] != "cmd" else orig_name
+        if target == orig_name:
+            _validate_unknown_app_name(orig_name)
+        logger.info(f"[AppLauncher] Direct spawn of '{target}' failed ({exc}); retrying via start shim.")
+        fallback = ["cmd", "/c", "start", "", target]
+        proc = subprocess.Popen(fallback, shell=False, creationflags=_NO_WINDOW)
         logger.info(f"[AppLauncher] Fallback spawn PID={proc.pid}")
         return proc.pid
 

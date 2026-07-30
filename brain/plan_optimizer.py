@@ -1,4 +1,4 @@
-from typing import List, Set
+from typing import Dict, List, Set
 from core.models import ExecutionPlanModel, PlanStepModel
 from observability.logger import logger
 
@@ -13,27 +13,37 @@ class PlanOptimizer:
         
         # 1. Eliminate Duplicate Capability & Arguments Steps
         unique_steps: List[PlanStepModel] = []
-        seen_signatures: Set[str] = set()
-        
+        signature_owner: Dict[str, int] = {}
+        # A dependency on a removed duplicate must point at the surviving twin,
+        # not be dropped — otherwise ordered steps start running concurrently.
+        canonical_id: Dict[int, int] = {}
+
         for step in plan.steps:
             sig = f"{step.capability}:{str(step.args)}"
-            if sig not in seen_signatures:
-                seen_signatures.add(sig)
+            if sig not in signature_owner:
+                signature_owner[sig] = step.step_id
+                canonical_id[step.step_id] = step.step_id
                 unique_steps.append(step)
             else:
+                canonical_id[step.step_id] = signature_owner[sig]
                 logger.info(f"[PlanOptimizer] Removed duplicate step {step.step_id} ({sig})")
-                
+
         # 2. Re-index step IDs and preserve valid dependency IDs
         id_mapping = {old_step.step_id: new_id for new_id, old_step in enumerate(unique_steps, start=1)}
-        
+
         optimized_steps: List[PlanStepModel] = []
         for new_id, step in enumerate(unique_steps, start=1):
             valid_deps = []
             for dep in step.depends_on:
-                if dep in id_mapping and dep != step.step_id:
-                    valid_deps.append(id_mapping[dep])
-                else:
-                    logger.debug(f"[PlanOptimizer] Pruned dependency link {dep} from step {step.step_id}")
+                survivor = canonical_id.get(dep)
+                if survivor is None:
+                    logger.debug(f"[PlanOptimizer] Pruned unknown dependency {dep} from step {step.step_id}")
+                    continue
+                mapped = id_mapping.get(survivor)
+                if mapped is None or mapped == new_id:
+                    continue
+                if mapped not in valid_deps:
+                    valid_deps.append(mapped)
             optimized_steps.append(
                 PlanStepModel(
                     step_id=new_id,

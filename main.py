@@ -80,7 +80,7 @@ def main():
     elif args.gui:
         app = JARVISApp()
         asyncio.run(app.initialize())
-        run_dashboard(app.state_manager, app.event_bus)
+        run_dashboard(app.state_manager, app.event_bus, jarvis_app=app)
     else:
         # Default to CLI mode if no flag is provided
         app = JARVISApp()

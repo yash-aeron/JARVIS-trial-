@@ -1,345 +1,506 @@
 """
-dashboard/app.py — Production PySide6 Desktop GUI Dashboard & Real-Time Monitor.
+dashboard/app.py — JARVIS desktop interface.
 
-Features:
-  1. Live Event Timeline (filtering by correlation ID, topic, sender, timestamp).
-  2. Execution Graph Viewer (shows active plan steps, statuses, dependency links, duration).
-  3. Real-Time State Monitor (FSM state transitions, active tool, subsystem latencies, CPU/RAM budget).
-  4. Memory Visualization (semantic memory recall inspection, importance/recency score breakdown, project tag filters).
+Conversation-first layout: an animated arc-reactor presence indicator and system
+vitals on the left, the dialogue with JARVIS on the right. Voice in (push-to-talk
+via faster-whisper) and voice out (edge-tts) are wired through SpeechManager.
+
+Diagnostics (event timeline, execution graph, memory inspector) live behind the
+Diagnostics tab rather than dominating the window.
 """
 
-import sys
 import asyncio
+import html
+import sys
 import time
-from typing import Optional, List, Dict, Any
+import uuid
+from typing import Any, Dict, List, Optional
 
 try:
     from PySide6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-        QLabel, QTextEdit, QProgressBar, QGroupBox, QListWidget, QSplitter,
-        QPushButton, QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
-        QTabWidget, QComboBox
+        QLabel, QTextEdit, QProgressBar, QSplitter, QPushButton, QLineEdit,
+        QTabWidget, QScrollArea, QFrame, QSizePolicy,
     )
-    from PySide6.QtCore import Qt, QTimer
-    from PySide6.QtGui import QFont, QColor
+    from PySide6.QtCore import Qt, QTimer, Signal
+    from PySide6.QtGui import QFont, QKeyEvent
     PYSIDE6_AVAILABLE = True
 except ImportError:
     PYSIDE6_AVAILABLE = False
 
 from state.state_manager import StateManager
+from state.states import AssistantState
 from system.monitor import SystemMonitor
 from core.event_bus import AsyncEventBus
+from core.models import EventModel
 from observability.metrics import MetricsProvider
 from memory.memory_manager import MemoryManager
-from memory.schema import MemoryItemModel
 from observability.logger import logger
+
+if PYSIDE6_AVAILABLE:
+    from dashboard.reactor import ReactorWidget
+
+# ── Palette ───────────────────────────────────────────────────────────────────
+BG_DEEP   = "#05080f"
+BG_PANEL  = "#0b1220"
+BG_INPUT  = "#111b2d"
+BORDER    = "#1b2b45"
+TEXT      = "#dce6f5"
+TEXT_DIM  = "#7c8ba5"
+ACCENT    = "#37c6ff"
+USER_C    = "#7ee8fa"
+OK_C      = "#3ddc97"
+WARN_C    = "#ffb454"
+ERR_C     = "#ff5470"
+
+STYLESHEET = f"""
+QMainWindow, QWidget {{ background: {BG_DEEP}; color: {TEXT};
+    font-family: 'Segoe UI', sans-serif; font-size: 13px; }}
+QFrame#panel {{ background: {BG_PANEL}; border: 1px solid {BORDER}; border-radius: 12px; }}
+QLabel#title {{ font-size: 15px; font-weight: 600; color: {ACCENT};
+    letter-spacing: 3px; }}
+QLabel#sub {{ color: {TEXT_DIM}; font-size: 11px; letter-spacing: 1px; }}
+QLabel#vital {{ color: {TEXT_DIM}; font-size: 11px; letter-spacing: 1px; }}
+QTextEdit {{ background: transparent; border: none; font-size: 14px; }}
+QTextEdit#diag {{ background: {BG_DEEP}; border: 1px solid {BORDER};
+    border-radius: 8px; font-family: 'Consolas', monospace; font-size: 11px;
+    color: {TEXT_DIM}; }}
+QLineEdit {{ background: {BG_INPUT}; border: 1px solid {BORDER};
+    border-radius: 18px; padding: 10px 16px; font-size: 14px; color: {TEXT}; }}
+QLineEdit:focus {{ border: 1px solid {ACCENT}; }}
+QPushButton {{ background: {BG_INPUT}; border: 1px solid {BORDER};
+    border-radius: 18px; padding: 9px 18px; color: {TEXT}; font-weight: 600; }}
+QPushButton:hover {{ border: 1px solid {ACCENT}; color: {ACCENT}; }}
+QPushButton:pressed {{ background: {BORDER}; }}
+QPushButton#mic[recording="true"] {{ border: 1px solid {ERR_C}; color: {ERR_C}; }}
+QProgressBar {{ background: {BG_INPUT}; border: none; border-radius: 5px;
+    height: 8px; text-align: center; }}
+QProgressBar::chunk {{ background: {ACCENT}; border-radius: 5px; }}
+QTabWidget::pane {{ border: 1px solid {BORDER}; border-radius: 10px;
+    background: {BG_PANEL}; }}
+QTabBar::tab {{ background: transparent; color: {TEXT_DIM}; padding: 9px 20px;
+    border-bottom: 2px solid transparent; letter-spacing: 1px; }}
+QTabBar::tab:selected {{ color: {ACCENT}; border-bottom: 2px solid {ACCENT}; }}
+QScrollBar:vertical {{ background: transparent; width: 8px; }}
+QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 4px; }}
+QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
+"""
 
 
 if PYSIDE6_AVAILABLE:
+
     class JARVISDashboard(QMainWindow):
-        """
-        Production GUI Dashboard visualizing:
-          - Event Timeline & Historical Replay
-          - Execution Graph & Step Lifecycle
-          - FSM State & Subsystem Hardware Resource Monitors
-          - Vector Memory Visualizer & Importance/Recency Scoring
-        """
+        """Conversation-centric JARVIS interface with reactor presence indicator."""
+
+        # Worker coroutines emit through these so UI updates stay on the Qt thread.
+        replyReady = Signal(str, str)      # (response, summary)
+        errorRaised = Signal(str)
+        transcribed = Signal(str)
 
         def __init__(
             self,
             state_manager: StateManager,
             event_bus: AsyncEventBus,
             memory_manager: Optional[MemoryManager] = None,
+            jarvis_app: Optional[Any] = None,
         ):
             super().__init__()
-            self.state_manager    = state_manager
-            self.event_bus        = event_bus
-            self.memory_manager   = memory_manager or MemoryManager()
+            self.state_manager = state_manager
+            self.event_bus = event_bus
+            self.memory_manager = memory_manager or MemoryManager()
+            self.jarvis_app = jarvis_app
             self.metrics_provider = MetricsProvider(SystemMonitor())
-            self._is_replaying    = False
 
-            self.setWindowTitle("JARVIS OS — Production System Monitor & Dashboard v2.0")
-            self.resize(1400, 920)
-            self.setStyleSheet("""
-                QMainWindow { background-color: #090d16; color: #e2e8f0; }
-                QGroupBox { border: 1px solid #1e293b; border-radius: 8px; margin-top: 12px; font-weight: bold; color: #38bdf8; background-color: #0f172a; }
-                QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
-                QLabel { color: #cbd5e1; font-family: 'Segoe UI', sans-serif; }
-                QLineEdit, QComboBox { background-color: #020617; border: 1px solid #1e293b; border-radius: 6px; color: #f8fafc; padding: 5px; }
-                QPushButton { background-color: #0284c7; color: white; border-radius: 6px; padding: 6px 12px; font-weight: bold; }
-                QPushButton:hover { background-color: #0369a1; }
-                QTextEdit { background-color: #020617; border: 1px solid #1e293b; border-radius: 6px; color: #f8fafc; font-family: 'Consolas', monospace; }
-                QTableWidget { background-color: #020617; gridline-color: #1e293b; color: #f8fafc; border: 1px solid #1e293b; }
-                QHeaderView::section { background-color: #0f172a; color: #38bdf8; border: 1px solid #1e293b; font-weight: bold; }
-                QProgressBar { border: 1px solid #1e293b; border-radius: 4px; text-align: center; color: white; background-color: #020617; }
-                QProgressBar::chunk { background-color: #0284c7; border-radius: 4px; }
-                QTabWidget::pane { border: 1px solid #1e293b; background-color: #0f172a; border-radius: 6px; }
-                QTabBar::tab { background-color: #020617; color: #94a3b8; border: 1px solid #1e293b; padding: 8px 16px; border-top-left-radius: 6px; border-top-right-radius: 6px; }
-                QTabBar::tab:selected { background-color: #0f172a; color: #38bdf8; font-weight: bold; border-bottom: 2px solid #38bdf8; }
-            """)
+            self._busy = False
+            self._mic = None
+            self._recorder_active = False
 
-            self._init_ui()
+            self.setWindowTitle("JARVIS")
+            self.resize(1180, 760)
+            self.setStyleSheet(STYLESHEET)
 
-            self.timer = QTimer(self)
-            self.timer.timeout.connect(self._update_loop)
-            self.timer.start(1000)
+            self._build_ui()
+            self._wire_events()
 
-        # ── UI Construction ───────────────────────────────────────────────────
-        def _init_ui(self):
-            main_widget = QWidget()
-            main_layout = QHBoxLayout(main_widget)
+            self._vitals_timer = QTimer(self)
+            self._vitals_timer.timeout.connect(self._refresh_vitals)
+            self._vitals_timer.start(1500)
 
-            splitter = QSplitter(Qt.Horizontal)
+            self._mic_timer = QTimer(self)
+            self._mic_timer.timeout.connect(self._pump_mic_level)
+            self._mic_timer.start(50)
 
-            # Left Sidebar — State, Latencies, Hardware Budget, Memory Query Controls
-            left_widget = QWidget()
-            left_layout = QVBoxLayout(left_widget)
+            self.replyReady.connect(self._on_reply)
+            self.errorRaised.connect(self._on_error)
+            self.transcribed.connect(self._on_transcribed)
 
-            # 1. State Monitor Box
-            state_box = QGroupBox("1. Real-Time State Monitor")
-            state_layout = QVBoxLayout(state_box)
-            self.lbl_state = QLabel(f"STATE: {self.state_manager.current_state.name}")
-            self.lbl_state.setFont(QFont("Segoe UI", 12, QFont.Bold))
-            self.lbl_state.setStyleSheet("color: #4ade80;")
-            state_layout.addWidget(self.lbl_state)
+            self._greet()
 
-            self.lbl_active_tool = QLabel("ACTIVE TOOL: Idle")
-            self.lbl_active_tool.setStyleSheet("color: #fbbf24;")
-            state_layout.addWidget(self.lbl_active_tool)
-            left_layout.addWidget(state_box)
+        # ── UI construction ───────────────────────────────────────────────────
+        def _build_ui(self) -> None:
+            root = QWidget()
+            self.setCentralWidget(root)
+            outer = QVBoxLayout(root)
+            outer.setContentsMargins(14, 14, 14, 14)
+            outer.setSpacing(12)
 
-            # 2. Execution Latencies Box
-            latency_box = QGroupBox("2. System Latency Metrics")
-            latency_layout = QVBoxLayout(latency_box)
-            self.lbl_bus_latency  = QLabel("Event Bus: -- ms")
-            self.lbl_mem_latency  = QLabel("Memory Retrieval: -- ms")
-            self.lbl_tool_latency = QLabel("Tool Execution: -- ms")
-            latency_layout.addWidget(self.lbl_bus_latency)
-            latency_layout.addWidget(self.lbl_mem_latency)
-            latency_layout.addWidget(self.lbl_tool_latency)
-            left_layout.addWidget(latency_box)
+            split = QSplitter(Qt.Horizontal)
+            split.setHandleWidth(12)
+            split.addWidget(self._build_left())
+            split.addWidget(self._build_right())
+            split.setStretchFactor(0, 0)
+            split.setStretchFactor(1, 1)
+            split.setSizes([390, 790])
+            outer.addWidget(split, 1)
 
-            # 3. Hardware Resource Budget Box
-            metrics_box = QGroupBox("3. Hardware Resource Monitors")
-            metrics_layout = QVBoxLayout(metrics_box)
+        def _build_left(self) -> QWidget:
+            panel = QFrame()
+            panel.setObjectName("panel")
+            panel.setMinimumWidth(330)
+            lay = QVBoxLayout(panel)
+            lay.setContentsMargins(18, 18, 18, 18)
+            lay.setSpacing(10)
 
-            metrics_layout.addWidget(QLabel("CPU Utilization:"))
-            self.pbar_cpu = QProgressBar()
-            metrics_layout.addWidget(self.pbar_cpu)
+            title = QLabel("J  A  R  V  I  S")
+            title.setObjectName("title")
+            title.setAlignment(Qt.AlignCenter)
+            lay.addWidget(title)
 
-            metrics_layout.addWidget(QLabel("RAM Utilization:"))
-            self.pbar_ram = QProgressBar()
-            metrics_layout.addWidget(self.pbar_ram)
+            self.lbl_tagline = QLabel("Just A Rather Very Intelligent System")
+            self.lbl_tagline.setObjectName("sub")
+            self.lbl_tagline.setAlignment(Qt.AlignCenter)
+            self.lbl_tagline.setWordWrap(True)
+            lay.addWidget(self.lbl_tagline)
 
-            metrics_layout.addWidget(QLabel("Disk Utilization:"))
-            self.pbar_disk = QProgressBar()
-            metrics_layout.addWidget(self.pbar_disk)
-            left_layout.addWidget(metrics_box)
+            self.reactor = ReactorWidget()
+            self.reactor.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            lay.addWidget(self.reactor, 1)
 
-            # 4. Interactive Memory Filter Controls
-            mem_control_box = QGroupBox("4. Semantic Memory Inspector Controls")
-            mem_control_layout = QVBoxLayout(mem_control_box)
-            self.txt_mem_query = QLineEdit()
-            self.txt_mem_query.setPlaceholderText("Enter search query for vector recall...")
-            mem_control_layout.addWidget(self.txt_mem_query)
+            self.lbl_activity = QLabel("Awaiting instruction")
+            self.lbl_activity.setObjectName("sub")
+            self.lbl_activity.setAlignment(Qt.AlignCenter)
+            self.lbl_activity.setWordWrap(True)
+            lay.addWidget(self.lbl_activity)
 
-            self.btn_search_mem = QPushButton("Query Semantic Memory")
-            self.btn_search_mem.clicked.connect(self._on_query_memory_clicked)
-            mem_control_layout.addWidget(self.btn_search_mem)
-            left_layout.addWidget(mem_control_box)
+            lay.addSpacing(6)
+            self.bar_cpu, cpu_row = self._vital_row("CPU")
+            self.bar_ram, ram_row = self._vital_row("MEMORY")
+            lay.addLayout(cpu_row)
+            lay.addLayout(ram_row)
 
-            # Right Main Workspace — Tabbed Views for Graph, Memory, Timeline
-            right_widget = QWidget()
-            right_layout = QVBoxLayout(right_widget)
+            return panel
 
-            self.tabs = QTabWidget()
+        def _vital_row(self, name: str):
+            row = QVBoxLayout()
+            row.setSpacing(4)
+            head = QHBoxLayout()
+            lbl = QLabel(name)
+            lbl.setObjectName("vital")
+            val = QLabel("--%")
+            val.setObjectName("vital")
+            val.setAlignment(Qt.AlignRight)
+            head.addWidget(lbl)
+            head.addWidget(val)
+            row.addLayout(head)
+            bar = QProgressBar()
+            bar.setTextVisible(False)
+            bar.setRange(0, 100)
+            row.addWidget(bar)
+            bar.value_label = val  # type: ignore[attr-defined]
+            return bar, row
 
-            # TAB A: Live Event Timeline
-            tab_timeline = QWidget()
-            tl_layout = QVBoxLayout(tab_timeline)
+        def _build_right(self) -> QWidget:
+            tabs = QTabWidget()
+            tabs.addTab(self._build_chat(), "CONVERSATION")
+            tabs.addTab(self._build_diagnostics(), "DIAGNOSTICS")
+            return tabs
 
-            filter_bar = QHBoxLayout()
-            filter_bar.addWidget(QLabel("CID Filter:"))
-            self.txt_cid_filter = QLineEdit()
-            self.txt_cid_filter.setPlaceholderText("Correlation ID...")
-            filter_bar.addWidget(self.txt_cid_filter)
+        def _build_chat(self) -> QWidget:
+            wrap = QWidget()
+            lay = QVBoxLayout(wrap)
+            lay.setContentsMargins(16, 16, 16, 16)
+            lay.setSpacing(12)
 
-            filter_bar.addWidget(QLabel("Topic:"))
-            self.txt_topic_filter = QLineEdit()
-            self.txt_topic_filter.setPlaceholderText("e.g. tool.started...")
-            filter_bar.addWidget(self.txt_topic_filter)
+            self.transcript = QTextEdit()
+            self.transcript.setReadOnly(True)
+            lay.addWidget(self.transcript, 1)
 
-            self.btn_replay = QPushButton("Replay Session")
-            self.btn_replay.clicked.connect(self._on_replay_clicked)
-            filter_bar.addWidget(self.btn_replay)
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            self.input = QLineEdit()
+            self.input.setPlaceholderText("Speak to JARVIS, or hold the mic button…")
+            self.input.returnPressed.connect(self._on_submit)
+            row.addWidget(self.input, 1)
 
-            self.btn_clear_tl = QPushButton("Clear")
-            self.btn_clear_tl.clicked.connect(lambda: self.txt_timeline.clear())
-            filter_bar.addWidget(self.btn_clear_tl)
-            tl_layout.addLayout(filter_bar)
+            self.btn_mic = QPushButton("HOLD TO TALK")
+            self.btn_mic.setObjectName("mic")
+            self.btn_mic.setToolTip("Hold to record, release to send")
+            self.btn_mic.pressed.connect(self._start_recording)
+            self.btn_mic.released.connect(self._stop_recording)
+            row.addWidget(self.btn_mic)
 
-            self.txt_timeline = QTextEdit()
-            self.txt_timeline.setReadOnly(True)
-            tl_layout.addWidget(self.txt_timeline)
-            self.tabs.addTab(tab_timeline, "Live Event Timeline")
+            self.btn_send = QPushButton("SEND")
+            self.btn_send.clicked.connect(self._on_submit)
+            row.addWidget(self.btn_send)
+            lay.addLayout(row)
 
-            # TAB B: Execution Graph & Plan Inspector
-            tab_graph = QWidget()
-            graph_layout = QVBoxLayout(tab_graph)
-            self.tbl_graph = QTableWidget(0, 5)
-            self.tbl_graph.setHorizontalHeaderLabels(["Step ID", "Capability", "Status", "Tool Target", "Details / Args"])
-            self.tbl_graph.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-            graph_layout.addWidget(self.tbl_graph)
-            self.tabs.addTab(tab_graph, "Execution Graph & Plan Inspector")
+            return wrap
 
-            # TAB C: Memory Visualizer & Importance Ranking
-            tab_memory = QWidget()
-            mem_layout = QVBoxLayout(tab_memory)
-            self.tbl_memory = QTableWidget(0, 6)
-            self.tbl_memory.setHorizontalHeaderLabels(["Memory Content", "Score", "Importance", "Project", "Source", "Tags"])
-            self.tbl_memory.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-            mem_layout.addWidget(self.tbl_memory)
-            self.tabs.addTab(tab_memory, "Semantic Vector Memory Visualizer")
+        def _build_diagnostics(self) -> QWidget:
+            wrap = QWidget()
+            lay = QVBoxLayout(wrap)
+            lay.setContentsMargins(16, 16, 16, 16)
+            lay.setSpacing(10)
 
-            right_layout.addWidget(self.tabs)
+            head = QHBoxLayout()
+            lbl = QLabel("EVENT STREAM")
+            lbl.setObjectName("sub")
+            head.addWidget(lbl)
+            head.addStretch(1)
+            btn_clear = QPushButton("CLEAR")
+            btn_clear.clicked.connect(lambda: self.txt_diag.clear())
+            head.addWidget(btn_clear)
+            lay.addLayout(head)
 
-            splitter.addWidget(left_widget)
-            splitter.addWidget(right_widget)
-            splitter.setSizes([420, 980])
+            self.txt_diag = QTextEdit()
+            self.txt_diag.setObjectName("diag")
+            self.txt_diag.setReadOnly(True)
+            lay.addWidget(self.txt_diag, 1)
 
-            main_layout.addWidget(splitter)
-            self.setCentralWidget(main_widget)
-            self.txt_timeline.append("[SYSTEM INIT]: JARVIS Production Dashboard v2.0 Online. Event sourcing stream active.")
+            return wrap
 
-            # Load initial sample data
-            self._load_memory_table()
+        # ── Event bus wiring ──────────────────────────────────────────────────
+        def _wire_events(self) -> None:
+            self.state_manager.subscribe(self._on_state_change)
+            self.event_bus.subscribe("*", self._on_bus_event)
 
-        # ── Data Updating Loop ────────────────────────────────────────────────
-        def _update_loop(self):
-            if self._is_replaying:
+        def _on_state_change(self, old: AssistantState, new: AssistantState) -> None:
+            self.reactor.set_state(new)
+            self.lbl_activity.setText(_ACTIVITY.get(new, new.name.title()))
+
+        async def _on_bus_event(self, ev: EventModel) -> None:
+            payload = ev.payload
+            if hasattr(payload, "model_dump"):
+                payload = payload.model_dump()
+            stamp = time.strftime("%H:%M:%S")
+            self.txt_diag.append(
+                f'<span style="color:{TEXT_DIM}">{stamp}</span> '
+                f'<span style="color:{ACCENT}">{html.escape(ev.topic)}</span> '
+                f'<span style="color:{TEXT_DIM}">{html.escape(str(payload)[:220])}</span>'
+            )
+
+        # ── Transcript rendering ──────────────────────────────────────────────
+        def _append(self, who: str, text: str, colour: str) -> None:
+            stamp = time.strftime("%H:%M")
+            self.transcript.append(
+                f'<div style="margin:10px 0 2px 0">'
+                f'<span style="color:{colour};font-weight:600;letter-spacing:1px">{who}</span>'
+                f'<span style="color:{TEXT_DIM};font-size:11px">  {stamp}</span></div>'
+                f'<div style="color:{TEXT};margin-bottom:6px">{html.escape(text)}</div>'
+            )
+            self.transcript.verticalScrollBar().setValue(
+                self.transcript.verticalScrollBar().maximum()
+            )
+
+        def _append_detail(self, text: str, colour: str) -> None:
+            self.transcript.append(
+                f'<div style="color:{colour};font-size:12px;margin:0 0 4px 14px">{html.escape(text)}</div>'
+            )
+
+        def _greet(self) -> None:
+            self._append("JARVIS", "Systems online. How can I help, sir?", ACCENT)
+
+        # ── Input handling ────────────────────────────────────────────────────
+        def _on_submit(self) -> None:
+            text = self.input.text().strip()
+            if not text:
+                return
+            self.input.clear()
+            self._dispatch(text)
+
+        def _dispatch(self, text: str) -> None:
+            if self._busy:
+                self._append_detail("Still working on the previous request…", WARN_C)
+                return
+            if self.jarvis_app is None:
+                self._append_detail("No JARVIS core attached — running in view-only mode.", WARN_C)
                 return
 
-            # Update State
-            self.lbl_state.setText(f"STATE: {self.state_manager.current_state.name}")
+            self._append("YOU", text, USER_C)
+            self._busy = True
+            self._set_inputs_enabled(False)
+            asyncio.ensure_future(self._process(text))
 
-            # Update Resource Metrics
-            status = self.metrics_provider.get_system_status()
-            self.pbar_cpu.setValue(int(status.cpu_percent))
-            self.pbar_ram.setValue(int(status.ram_percent))
-            self.pbar_disk.setValue(int(status.disk_percent))
-
-            # Update Latencies
-            benchmarks = self.metrics_provider.get_benchmark_results()
-            self.lbl_bus_latency.setText(f"Event Bus: {benchmarks.event_bus_latency_ms:.2f} ms")
-            self.lbl_mem_latency.setText(f"Memory Retrieval: {benchmarks.memory_retrieval_latency_ms:.2f} ms")
-            self.lbl_tool_latency.setText(f"Tool Execution: {benchmarks.tool_execution_latency_ms:.2f} ms")
-
-            # Update Timeline & Execution Graph
-            cid_filter = self.txt_cid_filter.text().strip()
-            topic_filter = self.txt_topic_filter.text().strip().lower()
-
-            events = self.event_bus.get_event_history(correlation_id=cid_filter if cid_filter else None, limit=25)
-
-            self.txt_timeline.clear()
-            for ev in events:
-                if topic_filter and topic_filter not in ev.topic.lower():
-                    continue
-
-                payload_data = getattr(ev.payload, "data", ev.payload.model_dump() if hasattr(ev.payload, "model_dump") else str(ev.payload))
-                if not isinstance(payload_data, dict):
-                    payload_data = {"info": str(payload_data)}
-
-                if ev.topic == "tool.started":
-                    tool_name = payload_data.get("tool_name", "Executing...")
-                    self.lbl_active_tool.setText(f"ACTIVE TOOL: {tool_name}")
-                elif ev.topic == "tool.finished":
-                    self.lbl_active_tool.setText("ACTIVE TOOL: Idle")
-
-                # If plan created, update execution graph table
-                if ev.topic == "plan.created":
-                    self._update_execution_graph(payload_data)
-
-                topic_tag = f"[{ev.topic.upper()}]"
-                self.txt_timeline.append(f"{topic_tag} ({ev.sender}) [CID: {ev.correlation_id[:8]}]: {payload_data}")
-
-        # ── Execution Graph Table Updater ─────────────────────────────────────
-        def _update_execution_graph(self, plan_data: Dict[str, Any]):
-            steps = plan_data.get("steps", [])
-            if not steps and "total_steps" in plan_data:
-                # Sample display if raw steps aren't in payload
-                steps = [
-                    {"step_id": 1, "capability": "open_application", "status": "COMPLETED", "tool": "app_launcher", "args": "app_name='notepad'"},
-                    {"step_id": 2, "capability": "read_context", "status": "RUNNING", "tool": "context_reader", "args": "action='snapshot'"},
-                ]
-
-            self.tbl_graph.setRowCount(len(steps))
-            for row, step in enumerate(steps):
-                sid = str(step.get("step_id", row + 1))
-                cap = str(step.get("capability", "unknown"))
-                stat = str(step.get("status", "COMPLETED"))
-                tool = str(step.get("tool", "system_tool"))
-                args = str(step.get("args", ""))
-
-                self.tbl_graph.setItem(row, 0, QTableWidgetItem(sid))
-                self.tbl_graph.setItem(row, 1, QTableWidgetItem(cap))
-                item_stat = QTableWidgetItem(stat)
-                if stat == "COMPLETED":
-                    item_stat.setForeground(QColor("#4ade80"))
-                elif stat == "RUNNING":
-                    item_stat.setForeground(QColor("#fbbf24"))
-                self.tbl_graph.setItem(row, 2, item_stat)
-                self.tbl_graph.setItem(row, 3, QTableWidgetItem(tool))
-                self.tbl_graph.setItem(row, 4, QTableWidgetItem(args))
-
-        # ── Memory Visualization Table ───────────────────────────────────────
-        def _load_memory_table(self, query: str = ""):
+        async def _process(self, text: str) -> None:
+            cid = str(uuid.uuid4())
             try:
-                memories = self.memory_manager.semantic_recall(query_text=query, top_k=15)
-                self.tbl_memory.setRowCount(len(memories))
-                for row, (item, score) in enumerate(memories):
-                    self.tbl_memory.setItem(row, 0, QTableWidgetItem(item.content[:60]))
-                    self.tbl_memory.setItem(row, 1, QTableWidgetItem(f"{score:.3f}"))
-                    self.tbl_memory.setItem(row, 2, QTableWidgetItem(f"{item.importance:.1f}"))
-                    self.tbl_memory.setItem(row, 3, QTableWidgetItem(item.project or "Global"))
-                    self.tbl_memory.setItem(row, 4, QTableWidgetItem(item.source or "User"))
-                    self.tbl_memory.setItem(row, 5, QTableWidgetItem(", ".join(item.tags)))
+                result = await self.jarvis_app.process_user_command(text, correlation_id=cid)
+                summary = self._summarize(result)
+                self.replyReady.emit(result.response, summary)
             except Exception as exc:
-                logger.debug(f"[Dashboard] Memory load error: {exc}")
+                logger.error(f"[Dashboard] Command failed: {exc}")
+                self.errorRaised.emit(str(exc))
 
-        def _on_query_memory_clicked(self):
-            query = self.txt_mem_query.text().strip()
-            self._load_memory_table(query)
-            self.tabs.setCurrentIndex(2)  # Switch to Memory Visualizer tab
+        @staticmethod
+        def _summarize(result) -> str:
+            bits: List[str] = []
+            for r in result.execution_results:
+                status = getattr(r, "status", "?")
+                if status == "completed" and isinstance(r.result, dict):
+                    if "cpu_percent" in r.result:
+                        bits.append(f"CPU {r.result['cpu_percent']}%  ·  RAM {r.result.get('ram_percent','?')}%")
+                    elif "app_name" in r.result:
+                        bits.append(f"{r.result['app_name']} → {r.result.get('action_taken','done')}")
+                    elif "url" in r.result:
+                        bits.append(f"searched: {r.result.get('query','')}")
+                elif status != "completed":
+                    bits.append(f"failed: {getattr(r, 'error', 'unknown error')}")
+            return "   ".join(bits)
 
-        # ── Session Replay Routine ───────────────────────────────────────────
-        def _on_replay_clicked(self):
-            cid_filter = self.txt_cid_filter.text().strip()
-            events = self.event_bus.get_event_history(correlation_id=cid_filter if cid_filter else None, limit=50)
+        def _on_reply(self, response: str, summary: str) -> None:
+            self._append("JARVIS", response, ACCENT)
+            if summary:
+                colour = ERR_C if "failed" in summary else OK_C
+                self._append_detail(summary, colour)
+            self._busy = False
+            self._set_inputs_enabled(True)
 
-            if not events:
-                self.txt_timeline.append("[REPLAY]: No matching historical events found.")
+        def _on_error(self, msg: str) -> None:
+            self._append("JARVIS", f"I ran into a problem: {msg}", ERR_C)
+            self._busy = False
+            self._set_inputs_enabled(True)
+
+        def _set_inputs_enabled(self, on: bool) -> None:
+            self.input.setEnabled(on)
+            self.btn_send.setEnabled(on)
+            self.btn_mic.setEnabled(on)
+            if on:
+                self.input.setFocus()
+
+        # ── Push-to-talk ──────────────────────────────────────────────────────
+        def _ensure_mic(self):
+            if self._mic is None:
+                from speech.audio_in import MicRecorder
+                self._mic = MicRecorder()
+            return self._mic
+
+        def _start_recording(self) -> None:
+            if self._busy:
+                return
+            mic = self._ensure_mic()
+            if not mic.available:
+                self._append_detail("No microphone available on this system.", WARN_C)
+                return
+            if mic.start():
+                self._recorder_active = True
+                self.btn_mic.setProperty("recording", "true")
+                self.btn_mic.setText("● RECORDING")
+                self.btn_mic.style().unpolish(self.btn_mic)
+                self.btn_mic.style().polish(self.btn_mic)
+                self.lbl_activity.setText("Listening…")
+                self.state_manager.transition_to(
+                    AssistantState.LISTENING, "Push-to-talk engaged"
+                )
+
+        def _stop_recording(self) -> None:
+            if not self._recorder_active or self._mic is None:
+                return
+            self._recorder_active = False
+            self.btn_mic.setProperty("recording", "false")
+            self.btn_mic.setText("HOLD TO TALK")
+            self.btn_mic.style().unpolish(self.btn_mic)
+            self.btn_mic.style().polish(self.btn_mic)
+
+            pcm = self._mic.stop()
+            if len(pcm) < 4000:  # under ~0.12 s of audio
+                self.lbl_activity.setText("Awaiting instruction")
+                self.state_manager.transition_to(AssistantState.IDLE, "Recording too short")
+                self._append_detail("That was too short to transcribe.", WARN_C)
                 return
 
-            self._is_replaying = True
-            self.txt_timeline.clear()
-            self.txt_timeline.append(f"[REPLAY START]: Replaying {len(events)} historical events for CID '{cid_filter or 'ALL'}'...")
+            self.lbl_activity.setText("Transcribing…")
+            asyncio.ensure_future(self._transcribe(pcm))
 
-            async def replay_routine():
-                for ev in events:
-                    await asyncio.sleep(0.08)
-                    self.txt_timeline.append(f"[REPLAY] ({ev.topic}) [{ev.sender}]: {ev.payload.data}")
-                self.txt_timeline.append("[REPLAY END]: Event replay complete.")
-                self._is_replaying = False
+        async def _transcribe(self, pcm: bytes) -> None:
+            try:
+                from core.interfaces import ISTTProvider
+                provider = self.jarvis_app.container.resolve(ISTTProvider)
+                text = await provider.transcribe(pcm, language=None)
+                self.transcribed.emit(text or "")
+            except Exception as exc:
+                logger.error(f"[Dashboard] Transcription failed: {exc}")
+                self.errorRaised.emit(f"transcription failed: {exc}")
 
-            asyncio.create_task(replay_routine())
+        def _on_transcribed(self, text: str) -> None:
+            text = text.strip()
+            self.state_manager.transition_to(AssistantState.IDLE, "Transcription complete")
+            if not text:
+                self._append_detail("I didn't catch that.", WARN_C)
+                self.lbl_activity.setText("Awaiting instruction")
+                return
+            self._dispatch(text)
+
+        def _pump_mic_level(self) -> None:
+            if self._recorder_active and self._mic is not None:
+                self.reactor.push_level(self._mic.level)
+
+        # ── Vitals ────────────────────────────────────────────────────────────
+        def _refresh_vitals(self) -> None:
+            try:
+                stats = self.metrics_provider.get_system_status()
+            except Exception:
+                return
+            cpu = int(getattr(stats, "cpu_percent", 0) or 0)
+            ram = int(getattr(stats, "ram_percent", 0) or 0)
+            self.bar_cpu.setValue(cpu)
+            self.bar_ram.setValue(ram)
+            self.bar_cpu.value_label.setText(f"{cpu}%")
+            self.bar_ram.value_label.setText(f"{ram}%")
+
+        # ── Shortcuts ─────────────────────────────────────────────────────────
+        def keyPressEvent(self, event: "QKeyEvent") -> None:  # noqa: N802
+            if event.key() == Qt.Key_Space and event.modifiers() & Qt.ControlModifier:
+                if not self._recorder_active:
+                    self._start_recording()
+                return
+            super().keyPressEvent(event)
+
+        def keyReleaseEvent(self, event: "QKeyEvent") -> None:  # noqa: N802
+            if event.key() == Qt.Key_Space and self._recorder_active:
+                self._stop_recording()
+                return
+            super().keyReleaseEvent(event)
 
 
-def run_dashboard(state_manager: StateManager, event_bus: AsyncEventBus):
+_ACTIVITY = {
+    AssistantState.IDLE: "Awaiting instruction",
+    AssistantState.WAKE_WORD_DETECTED: "Wake word detected",
+    AssistantState.LISTENING: "Listening…",
+    AssistantState.THINKING: "Interpreting request…",
+    AssistantState.PLANNING: "Formulating a plan…",
+    AssistantState.EXECUTING: "Carrying out your request…",
+    AssistantState.SPEAKING: "Responding…",
+    AssistantState.ERROR: "Something went wrong",
+} if PYSIDE6_AVAILABLE else {}
+
+
+def run_dashboard(
+    state_manager: StateManager,
+    event_bus: AsyncEventBus,
+    jarvis_app: Optional[Any] = None,
+):
     if not PYSIDE6_AVAILABLE:
-        print("[WARNING]: PySide6 is not installed in the current environment. To enable GUI dashboard, run 'pip install PySide6'.")
+        print("[WARNING]: PySide6 is not installed. Run 'pip install PySide6' to enable the GUI.")
         return
 
+    import qasync
+
     app = QApplication.instance() or QApplication(sys.argv)
-    window = JARVISDashboard(state_manager, event_bus)
+    loop = qasync.QEventLoop(app)
+    asyncio.set_event_loop(loop)
+
+    window = JARVISDashboard(state_manager, event_bus, jarvis_app=jarvis_app)
     window.show()
-    app.exec()
+
+    with loop:
+        loop.run_forever()

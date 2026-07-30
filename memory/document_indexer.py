@@ -122,7 +122,7 @@ class DocumentIndexer:
             raw_chunks = self.chunk_text(content, chunk_size=600, chunk_overlap=60)
             indexed_ids: List[str] = []
 
-            base_tags = tags or ["document", ext or "txt"]
+            base_tags = list(tags) if tags else ["document", ext or "txt"]
             if project and project not in base_tags:
                 base_tags.append(project)
 

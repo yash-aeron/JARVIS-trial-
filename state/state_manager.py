@@ -1,6 +1,6 @@
 import asyncio
 import uuid
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Set
 from state.states import AssistantState, ALLOWED_TRANSITIONS, StateTransitionError
 from core.interfaces import IEventBus
 from core.models import EventModel, StateChangedEventData
@@ -13,6 +13,8 @@ class StateManager:
         self._current_state: AssistantState = AssistantState.IDLE
         self._event_bus = event_bus
         self._subscribers: List[Callable[[AssistantState, AssistantState], None]] = []
+        # Strong refs so fire-and-forget publishes aren't garbage collected mid-flight.
+        self._pending_publishes: Set[asyncio.Task] = set()
 
     @property
     def current_state(self) -> AssistantState:
@@ -41,16 +43,28 @@ class StateManager:
                 
         if self._event_bus:
             payload = StateChangedEventData(old_state=old_state.name, new_state=new_state.name, reason=reason)
-            asyncio.create_task(
-                self._event_bus.publish(
-                    EventModel(
-                        correlation_id=correlation_id or str(uuid.uuid4()),
-                        topic="system.state_changed",
-                        data=payload.model_dump(),
-                        sender="StateManager"
-                    )
-                )
+            event = EventModel(
+                correlation_id=correlation_id or str(uuid.uuid4()),
+                topic="system.state_changed",
+                payload=payload,
+                sender="StateManager"
             )
+            # transition_to is sync and is called from both async paths and plain
+            # sync callers (CLI/GUI bootstrap), where there is no running loop.
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is not None:
+                task = loop.create_task(self._event_bus.publish(event))
+                self._pending_publishes.add(task)
+                task.add_done_callback(self._pending_publishes.discard)
+            else:
+                try:
+                    asyncio.run(self._event_bus.publish(event))
+                except Exception as e:
+                    logger.warning(f"Could not publish state change event outside an event loop: {e}")
 
     def set_state(self, new_state: AssistantState, reason: str = "", correlation_id: Optional[str] = None) -> None:
         """Alias for transition_to to maintain backward compatibility."""

@@ -36,10 +36,11 @@ ALLOWED_TRANSITIONS: Dict[AssistantState, List[AssistantState]] = {
         AssistantState.ERROR
     ],
     AssistantState.THINKING: [
-        AssistantState.PLANNING, 
-        AssistantState.EXECUTING, 
-        AssistantState.SPEAKING, 
-        AssistantState.IDLE, 
+        AssistantState.PLANNING,
+        AssistantState.EXECUTING,
+        AssistantState.SPEAKING,
+        AssistantState.LISTENING,
+        AssistantState.IDLE,
         AssistantState.ERROR
     ],
     AssistantState.PLANNING: [
@@ -58,6 +59,7 @@ ALLOWED_TRANSITIONS: Dict[AssistantState, List[AssistantState]] = {
         AssistantState.ERROR
     ],
     AssistantState.ERROR: [
-        AssistantState.IDLE
+        AssistantState.IDLE,
+        AssistantState.LISTENING
     ]
 }

@@ -273,8 +273,10 @@ def _query_selected_text(prior_clipboard: str) -> str:
     except Exception as exc:
         logger.debug(f"[ContextManager] Selected text error: {exc}")
     finally:
-        # Step 4: Restore original clipboard contents to preserve user clipboard state
-        if prior_clipboard is not None:
+        # Step 4: Restore original clipboard contents to preserve user clipboard state.
+        # An empty prior value means there was no *text* on the clipboard — it may
+        # have held an image or files, which EmptyClipboard() would destroy.
+        if prior_clipboard:
             _write_clipboard_unicode(prior_clipboard)
 
     return selected_result

@@ -66,9 +66,19 @@ class MemoryManager:
                 "confidence": "REAL", "access_count": "INTEGER",
                 "last_accessed": "REAL", "embedding_version": "TEXT"
             }
+            # Backfill defaults: ALTER TABLE ADD COLUMN leaves NULL, but the
+            # MemoryItemModel fields are non-Optional and would fail validation.
+            col_defaults = {
+                "project": "''", "language": "'en'", "source": "''",
+                "confidence": "1.0", "access_count": "0",
+                "last_accessed": "0.0", "embedding_version": "'v1'"
+            }
             for col_name, col_type in required_cols.items():
                 if col_name not in existing_cols:
                     cursor.execute(f"ALTER TABLE memories ADD COLUMN {col_name} {col_type}")
+                cursor.execute(
+                    f"UPDATE memories SET {col_name} = {col_defaults[col_name]} WHERE {col_name} IS NULL"
+                )
 
             conn.commit()
 
@@ -104,13 +114,18 @@ class MemoryManager:
         logger.info(f"[MemoryManager] Stored episodic event '{item.event_id}' for session '{item.session_id}'")
         return item.event_id
 
-    def get_session_episodes(self, session_id: str, limit: int = 50) -> List[EpisodicMemoryItemModel]:
+    def get_session_episodes(self, session_id: str, limit: Optional[int] = 50) -> List[EpisodicMemoryItemModel]:
+        sql = """
+            SELECT event_id, session_id, correlation_id, event_type, summary, details, timestamp
+            FROM episodic_memories WHERE session_id = ? ORDER BY timestamp ASC
+        """
+        params: List[Any] = [session_id]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            rows = cursor.execute("""
-                SELECT event_id, session_id, correlation_id, event_type, summary, details, timestamp
-                FROM episodic_memories WHERE session_id = ? ORDER BY timestamp ASC LIMIT ?
-            """, (session_id, limit)).fetchall()
+            rows = cursor.execute(sql, params).fetchall()
         return [
             EpisodicMemoryItemModel(
                 event_id=r[0], session_id=r[1], correlation_id=r[2],
@@ -154,13 +169,18 @@ class MemoryManager:
 
     def summarize_session_to_semantic(self, session_id: str) -> Optional[str]:
         """Rolling Long-Term Summarization: Compress session episodic events into a semantic memory fact."""
-        episodes = self.get_session_episodes(session_id)
+        # No limit: the default cap silently dropped the most recent episodes,
+        # which are exactly the ones a summary needs.
+        episodes = self.get_session_episodes(session_id, limit=None)
         if not episodes:
             return None
 
         summaries = [e.summary for e in episodes]
         compressed_text = f"Session '{session_id}' Summary: " + "; ".join(summaries)
         semantic_item = MemoryItemModel(
+            # Deterministic id so re-summarizing replaces the row instead of
+            # accumulating divergent copies of the same session.
+            item_id=f"summary_{session_id}",
             content=compressed_text,
             tags=["session_summary", session_id],
             importance=3.0,
@@ -192,15 +212,25 @@ class MemoryManager:
         now = time.time()
         scored_items: List[Tuple[MemoryItemModel, float]] = []
         query_vec = self._text_to_vector(query_text)
+        wanted_tags = {t.lower() for t in query_tags if t}
 
         for r in rows:
             tags_list = r[2].split(",") if r[2] else []
             item = MemoryItemModel(
                 item_id=r[0], content=r[1], tags=tags_list,
-                importance=r[3], project=r[4], language=r[5],
-                source=r[6], confidence=r[7], access_count=r[8],
-                last_accessed=r[9], timestamp=r[10], embedding_version=r[11]
+                importance=r[3] if r[3] is not None else 1.0,
+                project=r[4] or "", language=r[5] or "en",
+                source=r[6] or "",
+                confidence=r[7] if r[7] is not None else 1.0,
+                access_count=r[8] or 0,
+                last_accessed=r[9] or 0.0,
+                timestamp=r[10] if r[10] is not None else 0.0,
+                embedding_version=r[11] or "v1"
             )
+
+            # Tag filter: when tags are requested, an item must carry at least one.
+            if wanted_tags and not wanted_tags & {t.strip().lower() for t in item.tags}:
+                continue
 
             # 1. Semantic Cosine Similarity (Normalized 0.0 - 1.0)
             mem_vec = self._text_to_vector(item.content)

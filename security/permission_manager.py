@@ -26,6 +26,36 @@ class SecurityPolicyModel(BaseModel):
         "modify_registry": "CRITICAL",
         "network_listen": "HIGH"
     })
+    # Tools dispatch on args["action"], so a destructive action can arrive under a
+    # low-risk capability. These override the capability's declared risk.
+    action_risk_levels: Dict[str, str] = Field(default_factory=lambda: {
+        "kill": "HIGH",
+        "close": "MEDIUM",
+        "terminate": "MEDIUM",
+        "shutdown": "CRITICAL",
+        "restart": "CRITICAL",
+        "reboot": "CRITICAL",
+        "sleep": "HIGH",
+        "hibernate": "HIGH",
+        "lock": "MEDIUM",
+        "logoff": "HIGH",
+    })
+    # Read-only actions carry no side effects, so they may lower an otherwise
+    # high-risk capability (e.g. reading CPU/RAM under "system_control").
+    read_only_actions: Dict[str, str] = Field(default_factory=lambda: {
+        "get_status": "LOW",
+        "status": "LOW",
+        "get_metrics": "LOW",
+        "hardware_info": "LOW",
+        "list": "LOW",
+        "snapshot": "LOW",
+        "clipboard": "LOW",
+        "recall": "LOW",
+        "search": "LOW",
+    })
+
+
+_RISK_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
 
 
 class PermissionManager:
@@ -35,14 +65,37 @@ class PermissionManager:
         self.policy = policy or SecurityPolicyModel()
         self._approved_correlations: Set[str] = set()
 
-    def get_capability_risk(self, capability: str) -> str:
-        """Return declared risk level for a capability ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')."""
-        return self.policy.capability_risk_levels.get(capability, "LOW")
+    def get_capability_risk(self, capability: str, args: Optional[Dict] = None) -> str:
+        """
+        Return the effective risk level for a capability ('LOW'..'CRITICAL').
+
+        When the request carries an `action`, the higher of the capability risk and
+        the action risk wins — a destructive action must not inherit a low-risk
+        capability's rating.
+        """
+        risk = self.policy.capability_risk_levels.get(capability, "LOW")
+        if args:
+            action = args.get("action")
+            if isinstance(action, str):
+                key = action.strip().lower()
+                action_risk = self.policy.action_risk_levels.get(key)
+                if action_risk and _RISK_ORDER[action_risk] > _RISK_ORDER[risk]:
+                    return action_risk
+                read_only_risk = self.policy.read_only_actions.get(key)
+                if read_only_risk and _RISK_ORDER[read_only_risk] < _RISK_ORDER[risk]:
+                    return read_only_risk
+        return risk
 
     def is_capability_allowed(self, capability: str, active_capabilities: Optional[List[str]] = None) -> bool:
         """Verify capability against global policy and active capability sandbox."""
         if capability in self.policy.blocked_capabilities:
             logger.warning(f"[PermissionManager] Capability '{capability}' is explicitly blocked by security policy.")
+            return False
+
+        # An empty allowlist means "no allowlist configured"; a populated one is
+        # authoritative and must deny anything absent from it.
+        if self.policy.allowed_capabilities and capability not in self.policy.allowed_capabilities:
+            logger.warning(f"[PermissionManager] Capability '{capability}' is not in the policy allowlist.")
             return False
 
         if active_capabilities is not None and capability not in active_capabilities:
@@ -51,9 +104,9 @@ class PermissionManager:
 
         return True
 
-    def requires_user_approval(self, capability: str) -> bool:
+    def requires_user_approval(self, capability: str, args: Optional[Dict] = None) -> bool:
         """Check if capability risk level requires high-risk action approval."""
-        risk = self.get_capability_risk(capability)
+        risk = self.get_capability_risk(capability, args)
         if not self.policy.require_approval_for_high_risk:
             return False
         return risk in ["HIGH", "CRITICAL"]
@@ -67,16 +120,26 @@ class PermissionManager:
         """Check if correlation ID has received user approval."""
         return correlation_id in self._approved_correlations
 
-    def evaluate_request_security(self, capability: str, correlation_id: str) -> bool:
+    def evaluate_request_security(
+        self,
+        capability: str,
+        correlation_id: str,
+        args: Optional[Dict] = None,
+        active_capabilities: Optional[List[str]] = None,
+    ) -> bool:
         """
         Master security gate check evaluating sandboxing & high-risk approval.
         Returns True if authorized; False if denied.
         """
-        if not self.is_capability_allowed(capability):
+        if not self.is_capability_allowed(capability, active_capabilities):
             return False
 
-        if self.requires_user_approval(capability) and not self.is_approved(correlation_id):
-            logger.warning(f"[PermissionManager] Action '{capability}' requires explicit approval for CID '{correlation_id}'.")
+        if self.requires_user_approval(capability, args) and not self.is_approved(correlation_id):
+            risk = self.get_capability_risk(capability, args)
+            logger.warning(
+                f"[PermissionManager] Action '{capability}' (risk {risk}) requires explicit "
+                f"approval for CID '{correlation_id}'."
+            )
             return False
 
         return True

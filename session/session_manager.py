@@ -4,7 +4,7 @@ from typing import List, Optional
 from datetime import datetime
 
 class SessionModel(BaseModel):
-    session_id: str = Field(default_factory=lambda: f"sess_{int(datetime.now().timestamp())}")
+    session_id: str = Field(default_factory=lambda: f"sess_{int(datetime.now().timestamp())}_{uuid.uuid4().hex[:8]}")
     session_name: str
     start_time: float = Field(default_factory=lambda: datetime.now().timestamp())
     tasks_performed: List[str] = Field(default_factory=list)

@@ -23,6 +23,7 @@ from state.states import AssistantState
 from language.manager import LanguageManager
 from speech.vad import SileroVAD
 from speech.wake_word import WakeWordDetector
+from speech.audio_out import AudioPlayer
 from observability.logger import logger
 
 
@@ -64,6 +65,8 @@ class SpeechManager(IService):
 
         self._speaking         = False
         self._listen_task: Optional[asyncio.Task] = None
+        # Synthesis only produces bytes; without a player nothing is ever audible.
+        self.audio_player      = AudioPlayer()
 
     # ── IService ───────────────────────────────────────────────────────────────
     @property
@@ -94,6 +97,7 @@ class SpeechManager(IService):
             self._stt.interrupt()
         if hasattr(self._tts, "interrupt"):
             self._tts.interrupt()
+        self.audio_player.interrupt()
         self._speaking = False
         logger.info("[SpeechManager] Pipeline interrupted.")
 
@@ -223,6 +227,8 @@ class SpeechManager(IService):
         voice = self._language_manager.get_voice_for_language(language)
 
         audio_bytes = await self._tts.synthesize(text, voice=voice, language=language)
+        if audio_bytes:
+            await self.audio_player.play(audio_bytes)
         self._speaking = False
 
         if self._event_bus:

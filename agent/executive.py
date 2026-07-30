@@ -76,7 +76,7 @@ class ExecutiveAgent:
             decision=decision
         )
 
-    def reflect(self, user_goal: str, execution_results: list) -> bool:
+    def reflect(self, user_goal: str, execution_results: list, expected_steps: Optional[int] = None) -> bool:
         """Reflection loop: Evaluate whether user goal was actually satisfied by execution results."""
         if not execution_results:
             logger.warning(f"[ExecutiveReflection] Goal '{user_goal}' yielded no execution results.")
@@ -85,6 +85,15 @@ class ExecutiveAgent:
         all_completed = all(getattr(r, "status", "") == "completed" for r in execution_results)
         if not all_completed:
             logger.warning(f"[ExecutiveReflection] Goal '{user_goal}' has incomplete or failed step executions.")
+            return False
+
+        # A plan that aborts mid-way returns fewer results than it had steps; without
+        # this check a single completed step would look like full success.
+        if expected_steps is not None and len(execution_results) < expected_steps:
+            logger.warning(
+                f"[ExecutiveReflection] Goal '{user_goal}' produced {len(execution_results)} "
+                f"of {expected_steps} expected step results."
+            )
             return False
 
         logger.info(f"[ExecutiveReflection] Goal '{user_goal}' successfully satisfied.")

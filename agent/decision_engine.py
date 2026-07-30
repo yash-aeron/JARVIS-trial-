@@ -1,3 +1,4 @@
+import re
 from typing import Optional, List, Tuple
 from pydantic import BaseModel, Field
 from core.models import ExecutionContextModel
@@ -63,20 +64,26 @@ class DecisionEngine:
         context: Optional[ExecutionContextModel] = None
     ) -> AgentDecisionModel:
         text_lower = utterance.lower()
+        words = set(re.findall(r"[a-z0-9\-']+", text_lower))
 
         needs_planning = (intent_category == "MULTI_STEP_PLAN")
-        needs_memory = any(w in text_lower for w in ["remember", "last time", "history", "notes", "my preference"])
-        needs_vision = any(w in text_lower for w in ["screen", "see", "look", "window", "ocr"])
-        needs_web = any(w in text_lower for w in ["weather", "news", "search", "download", "browse"])
+        needs_memory = bool(words & {"remember", "history", "notes", "preference", "preferences"}) or \
+            any(p in text_lower for p in ["last time", "my preference"])
+        needs_vision = bool(words & {"screen", "see", "look", "window", "ocr", "screenshot"})
+        needs_web = bool(words & {"weather", "news", "search", "download", "browse"})
 
         risk_level = "LOW"
-        if any(w in text_lower for w in ["delete", "shutdown", "format", "wipe", "rm -rf"]):
+        if bool(words & {"delete", "shutdown", "format", "wipe"}) or "rm -rf" in text_lower:
             risk_level = "CRITICAL"
-        elif any(w in text_lower for w in ["install", "update", "git push", "write"]):
+        elif bool(words & {"install", "update", "write"}) or "git push" in text_lower:
             risk_level = "MEDIUM"
 
-        confidence = 0.95 if any(w in text_lower for w in ["open", "launch", "kholo", "run", "hello", "hi"]) else 0.40
-        needs_clarification = (confidence < 0.50)
+        # Match whole words: substring matching made "hi" fire on "which" and
+        # "run" on "brunch", misrouting unrelated utterances into app launches.
+        confidence = 0.95 if words & {"open", "launch", "kholo", "run", "start", "hello", "hi"} else 0.40
+        # Don't demand clarification when we already know what the request needs.
+        has_actionable_signal = bool(capabilities_needed) or needs_planning or needs_memory or needs_vision or needs_web
+        needs_clarification = (confidence < 0.50) and not has_actionable_signal
 
         subgoals = self.decompose_subgoals(utterance) if needs_planning else [utterance]
         is_allowed, violations = self.evaluate_constraints(

@@ -26,7 +26,7 @@ from brain.plan_optimizer import PlanOptimizer
 from agent.executive import ExecutiveAgent, AgentDecisionModel
 
 from tools.registry import ToolRegistry
-from tools.system_tools import SystemControlTool, ApplicationLauncherTool, ContextReaderTool, MemoryManagementTool
+from tools.system_tools import SystemControlTool, ApplicationLauncherTool, ContextReaderTool, MemoryManagementTool, WebSearchTool
 from automation.undo_manager import UndoManager
 from automation.executor import PlanExecutor
 from skills.skill_engine import SkillEngine
@@ -122,6 +122,7 @@ def _register_automation(container: DependencyContainer) -> None:
     tool_reg.register(ApplicationLauncherTool())
     tool_reg.register(ContextReaderTool(context_manager=context_mgr))
     tool_reg.register(MemoryManagementTool(memory_manager=memory_mgr))
+    tool_reg.register(WebSearchTool())
 
     from vision.vision_service import ScreenshotCaptureTool
     tool_reg.register(ScreenshotCaptureTool())
@@ -164,6 +165,7 @@ class JARVISApp:
         logger.info("Initializing JARVIS AI Operating System Assistant from DI Container...")
         self.container = container or bootstrap_container()
         self.container.register_singleton(JARVISApp, self)
+        self._chat_history: List[tuple] = []
 
     @property
     def state_manager(self) -> StateManager:
@@ -190,7 +192,59 @@ class JARVISApp:
         await service_mgr.stop_all()
         logger.info("JARVIS Subsystems shutdown complete.")
 
+    async def _converse(
+        self,
+        utterance: str,
+        cid: str,
+        context: Optional[ExecutionContextModel] = None,
+    ) -> str:
+        """Answer a conversational turn with the LLM, carrying short-term history."""
+        state_mgr: StateManager = self.container.resolve(StateManager)
+        state_mgr.transition_to(AssistantState.THINKING, "Composing reply", correlation_id=cid)
+
+        llm: ILLMProvider = self.container.resolve(ILLMProvider)
+        mode_mgr: ModeManager = self.container.resolve(ModeManager)
+
+        focus = ""
+        if context is not None and getattr(context, "focused_app", ""):
+            focus = f"\nThe user is currently focused on: {context.focused_app}."
+
+        history = ""
+        if self._chat_history:
+            turns = [f"User: {u}\nJARVIS: {a}" for u, a in self._chat_history[-6:]]
+            history = "\n\nRecent conversation:\n" + "\n".join(turns)
+
+        system_prompt = (
+            "You are JARVIS, an AI assistant running locally on the user's Windows PC. "
+            "You address the user as 'sir'. You are concise, dry, and quietly capable — "
+            "never verbose or bubbly. Answer in one to three short sentences unless asked "
+            "for detail. You can open applications, search the web, and report system "
+            f"status when asked. Current mode: {mode_mgr.current_mode}.{focus}"
+        )
+
+        try:
+            reply = await llm.generate(
+                prompt=f"{history}\n\nUser: {utterance}\nJARVIS:".strip(),
+                system_prompt=system_prompt,
+                # Chat quality matters more than latency here; the smallest tier
+                # drifts into third-person narration instead of answering.
+                complexity_hint=TaskComplexity.MULTI_STEP_PLAN,
+            )
+            reply = (reply or "").strip()
+        except Exception as exc:
+            logger.error(f"[JARVISApp] Conversation generation failed: {exc}")
+            reply = ""
+
+        if not reply or reply.startswith("[JARVIS Fallback Engine]"):
+            reply = "I'm online, sir, though my language model is unavailable at the moment."
+
+        self._chat_history.append((utterance, reply))
+        if len(self._chat_history) > 12:
+            self._chat_history = self._chat_history[-12:]
+        return reply
+
     async def process_user_command(self, utterance: str, correlation_id: Optional[str] = None) -> UserCommandResultModel:
+
         cid = correlation_id or str(uuid.uuid4())
         logger.info(f"[USER COMMAND] [CID: {cid}]: '{utterance}'")
         
@@ -202,16 +256,19 @@ class JARVISApp:
         context_mgr: ContextManager = self.container.resolve(ContextManager)
         event_bus: IEventBus = self.container.resolve(IEventBus)
         
+        # Snapshot desktop context up front: the executive needs it to enforce mode
+        # constraints, and get_snapshot() blocks (Win32 + PowerShell), so keep it
+        # off the event loop.
+        runtime_context: ExecutionContextModel = await asyncio.to_thread(context_mgr.get_snapshot)
+
         # Step 1: Executive Agent Processing
-        executive_res = await exec_agent.process(utterance, correlation_id=cid)
+        executive_res = await exec_agent.process(utterance, correlation_id=cid, context=runtime_context)
+
         intent: IntentResultModel = executive_res.intent
         decision: AgentDecisionModel = executive_res.decision
         
         results: List[ToolResultModel] = []
-        if decision.needs_clarification:
-            response = decision.clarification_prompt or "Could you please clarify your request?"
-            state_mgr.transition_to(AssistantState.IDLE, "Clarification requested", correlation_id=cid)
-        elif decision.needs_planning or intent.capabilities_needed:
+        if decision.needs_planning or intent.capabilities_needed:
             # Step 2: Capability Planning & Optimization
             plan: ExecutionPlanModel = await planner.create_plan(utterance, intent.capabilities_needed, correlation_id=cid)
             
@@ -220,22 +277,31 @@ class JARVISApp:
             await event_bus.publish(EventModel(correlation_id=cid, topic="plan.created", payload=plan_payload, sender="JARVISApp"))
             
             # Step 3: Parallel Execution via Action Queue with ExecutionContextModel
-            runtime_context: ExecutionContextModel = context_mgr.get_snapshot()
             tool_results = await executor.execute_plan(plan, context=runtime_context)
             results = tool_results
 
             # Step 3b: Executive Reflection & Fallback Re-planning
-            is_satisfied = exec_agent.reflect(utterance, results)
+            is_satisfied = exec_agent.reflect(utterance, results, expected_steps=len(plan.steps))
             if not is_satisfied:
                 logger.warning(f"[JARVISApp] Reflection failed for '{utterance}'. Triggering fallback re-planning...")
                 fallback_planner: FallbackPlanner = self.container.resolve(FallbackPlanner)
                 fb_steps = fallback_planner.generate_fallback_steps(utterance)
                 fb_plan = ExecutionPlanModel(correlation_id=cid, user_goal=utterance, steps=fb_steps)
-                results = await executor.execute_plan(fb_plan, context=runtime_context)
+                fb_results = await executor.execute_plan(fb_plan, context=runtime_context)
+                # Keep the original failures alongside the fallback attempt so the
+                # caller can see what actually happened.
+                results = results + fb_results
+                is_satisfied = exec_agent.reflect(utterance, fb_results)
 
-            response = f"Sir, I have executed your request for '{utterance}'."
+            if is_satisfied:
+                response = f"Sir, I have executed your request for '{utterance}'."
+            else:
+                failures = [r.error for r in results if getattr(r, "status", "") != "completed" and r.error]
+                detail = f" ({failures[0]})" if failures else ""
+                response = f"Sir, I was unable to complete your request for '{utterance}'.{detail}"
         else:
-            response = f"Sir, I am online and listening: '{utterance}'."
+            # Conversational turn — answer with the LLM rather than a canned string.
+            response = await self._converse(utterance, cid, runtime_context)
             state_mgr.transition_to(AssistantState.IDLE, "Response generated", correlation_id=cid)
             
         # Step 4: Speech Synthesis & Output
